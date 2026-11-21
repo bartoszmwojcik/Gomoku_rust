@@ -147,7 +147,13 @@ impl TestApp {
             pool_max: 4,
         })
         .unwrap();
-        db.migrate().await.unwrap();
+        // Many databases are created at once when tests run in parallel: the first connection may need a moment.
+        let mut attempts = 0;
+        while let Err(error) = db.migrate().await {
+            attempts += 1;
+            assert!(attempts < 5, "migrating the test database failed: {error}");
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
         let config = fast_config(overrides);
         let (state, clock, mail) = state_for(db.clone(), config.clone(), Ok(()));
         let tasks = state.tasks.clone();
@@ -198,6 +204,11 @@ impl TestApp {
             .hash(password)
             .await
             .unwrap()
+    }
+
+    /// The application clock now.
+    pub fn now(&self) -> OffsetDateTime {
+        *self.clock.lock().unwrap()
     }
 
     pub fn advance_seconds(&self, seconds: i64) {
@@ -355,6 +366,23 @@ impl Client {
         self.send(request, Body::from(body.to_string())).await
     }
 
+    /// A JSON PUT with the CSRF headers a browser form would send.
+    pub async fn put(&mut self, uri: &str, body: Value) -> Reply {
+        let request = Request::put(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ORIGIN, ORIGIN)
+            .header("x-gomoku-request", "1");
+        self.send(request, Body::from(body.to_string())).await
+    }
+
+    /// A DELETE with the CSRF headers a browser would send.
+    pub async fn delete(&mut self, uri: &str) -> Reply {
+        let request = Request::delete(uri)
+            .header(header::ORIGIN, ORIGIN)
+            .header("x-gomoku-request", "1");
+        self.send(request, Body::empty()).await
+    }
+
     /// A JSON POST without any CSRF header.
     pub async fn post_bare(&mut self, uri: &str, body: Value) -> Reply {
         self.send(
@@ -363,4 +391,9 @@ impl Client {
         )
         .await
     }
+}
+
+/// The application clock of a test app, for code that takes the time as a parameter.
+pub fn now_of(app: &TestApp) -> OffsetDateTime {
+    app.now()
 }

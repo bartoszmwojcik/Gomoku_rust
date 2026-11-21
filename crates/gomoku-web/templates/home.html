@@ -1,10 +1,35 @@
 {% extends "layout.html" %}
 {% block content %}
 <h1>{{ ctx.tr.t("home.title") }}</h1>
-<p>{{ ctx.tr.t("home.lead") }}</p>
+<p>{{ ctx.tr.t("home.page.intro") }}</p>
+{% if cancelled_notice %}
+<section class="alert" role="status" data-testid="cancelled-notice">
+  <strong>{{ ctx.tr.t("home.page.cancelled.title") }}</strong> {{ ctx.tr.t("home.page.cancelled.body") }}
+</section>
+{% endif %}
 {% match signed_in_as %}
 {% when Some with (text) %}<p data-testid="signed-in-as">{{ text }}</p>
-{% when None %}<p>{{ ctx.tr.t("home.guest") }}</p>
+{% when None %}{% endmatch %}
+{% match current %}
+{% when Some with (game) %}
+<section class="alert warning" role="status" data-testid="current-game">
+  <strong>{{ ctx.tr.t("home.page.hasGame") }}</strong> {{ game.1 }}
+  <a href="/games/{{ game.0 }}" data-testid="current-game-link">{{ ctx.tr.t("home.shared.goToGame") }}</a>
+</section>
+{% when None %}
+{% match ctx.user %}
+{% when Some with (_user) %}
+<form data-api="/api/games" data-redirect-game data-testid="create-form" data-reveal-RATE_LIMITED="#create-limit" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <button type="submit" data-testid="create-game">{{ ctx.tr.t("home.create.createInvitation") }}</button>
+</form>
+<p id="create-limit" role="alert" hidden>{{ ctx.tr.t("home.shared.tooManyInvitations") }}</p>
+{% when None %}
+<p><a class="button" href="/play" data-testid="play-without-account">{{ ctx.tr.t("home.page.playWithoutAccount") }}</a></p>
 {% endmatch %}
-<p><a href="/spike/board">{{ ctx.tr.t("home.board") }}</a></p>
+{% endmatch %}
+<nav aria-label="{{ ctx.tr.t("nav.main") }}">
+  {% if ctx.user.is_some() %}<a href="/lobby" data-testid="nav-lobby">{{ ctx.tr.t("home.page.lobby") }}</a> · <a href="/history" data-testid="nav-history">{{ ctx.tr.t("history.heading") }}</a> · {% endif %}
+  <a href="/join" data-testid="nav-join">{{ ctx.tr.t("home.shared.haveCode") }}</a>
+</nav>
 {% endblock %}

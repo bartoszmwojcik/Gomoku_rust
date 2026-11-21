@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("review.meta.title") }}{% endblock %}
+{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/review.js" defer></script>{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("review.heading") }}</h1>
+<div id="review" data-testid="review"></div>
+<script type="application/json" id="review-data">{{ data|safe }}</script>
+<p><a href="/history">{{ ctx.tr.t("review.backToHistory") }}</a></p>
+{% endblock %}

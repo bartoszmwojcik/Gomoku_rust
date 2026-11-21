@@ -7,6 +7,7 @@ pub mod auth;
 pub mod board;
 pub mod clock;
 pub mod constants;
+pub mod game;
 pub mod history;
 pub mod i18n;
 pub mod invitation_code;

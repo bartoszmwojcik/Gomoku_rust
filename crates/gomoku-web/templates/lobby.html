@@ -1,0 +1,8 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("lobby.meta.title") }}{% endblock %}
+{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/lobby.js" defer></script>{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("lobby.heading") }}</h1>
+<div id="lobby" data-testid="lobby"></div>
+<script type="application/json" id="lobby-initial">{{ initial|safe }}</script>
+{% endblock %}

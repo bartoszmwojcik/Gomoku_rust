@@ -373,13 +373,7 @@ async fn the_reminder_shows_for_unconfirmed_players_on_home_and_account_only() {
         assert!(page.body.contains("verify-banner"), "{path}");
         assert!(page.body.contains("/assets/banner.js"));
     }
-    assert!(
-        !player
-            .get("/spike/board")
-            .await
-            .body
-            .contains("verify-banner")
-    );
+    assert!(!player.get("/login").await.body.contains("verify-banner"));
     assert!(!app.client().get("/").await.body.contains("verify-banner"));
     confirm_email(&app, "ala@example.com").await;
     assert!(!player.get("/").await.body.contains("verify-banner"));

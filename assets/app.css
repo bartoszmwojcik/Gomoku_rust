@@ -16,3 +16,27 @@ small { color: var(--text-muted); }
 [hidden] { display: none !important; }
 .banner { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; padding: 0.75rem 1rem; background: var(--surface-raised); border-bottom: 1px solid var(--board-line); }
 button.danger { background: var(--action-danger-bg); color: var(--action-danger-text); }
+.alert { border: 1px solid var(--board-line); padding: 0.5rem 0.75rem; margin: 0.5rem 0; background: var(--surface-raised); }
+.alert.warning { border-color: var(--action-danger-bg); }
+.alert.danger { border-color: var(--action-danger-bg); }
+.result.win { border-left: 6px solid var(--palette-stone-700); padding: 0.5rem 0.75rem; }
+.result.loss { border-left: 6px solid var(--action-danger-bg); padding: 0.5rem 0.75rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.clock { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.25rem 0; }
+.clock.running { font-weight: 700; }
+.clock[data-low="true"] .clock-time { color: var(--action-danger-bg); font-weight: 700; outline: 2px solid var(--action-danger-bg); }
+.board-host { margin: 0.5rem 0; }
+.cell { position: relative; display: block; width: 100%; min-width: 0; padding: 0; min-height: 0; }
+.cell .stone { display: block; width: 78%; height: 78%; margin: 11%; border-radius: 50%; }
+.cell .stone.black { background: var(--palette-stone-900); }
+.cell .stone.white { background: var(--palette-stone-50); border: 1px solid var(--palette-stone-700); box-sizing: border-box; }
+.cell .stone.preview { opacity: 0.55; }
+.cell.last .stone { outline: 3px solid var(--action-danger-bg); }
+.cell.win { background: var(--palette-wood-surface); }
+.dialog { max-width: min(28rem, 92vw); }
+.actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+.card { border: 1px solid var(--board-line); padding: 0.75rem; margin: 0.5rem 0; }
+.card input[type="text"] { width: 100%; }
+a.button { display: inline-block; padding: 0.6rem 1rem; border: 1px solid var(--board-line); text-decoration: none; min-height: 2.75rem; box-sizing: border-box; }
+ul.history, ul.seekers { list-style: none; padding: 0; }
+ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(--board-line); }

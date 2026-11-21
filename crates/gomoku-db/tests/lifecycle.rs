@@ -70,7 +70,10 @@ async fn deleting_an_account_removes_it_with_its_sessions_and_links() {
     .unwrap();
     let other = add_user(&db, "bob@example.com", "Bob", "bob").await;
 
-    let outcome = db.delete_account(id, "$hash", |_| false).await.unwrap();
+    let outcome = db
+        .delete_account(id, "$hash", |_| false, now())
+        .await
+        .unwrap();
     assert_eq!(outcome, DeleteOutcome::Deleted);
     assert!(db.find_user_by_id(id).await.unwrap().is_none());
     assert_eq!(
@@ -84,7 +87,9 @@ async fn deleting_an_account_removes_it_with_its_sessions_and_links() {
     );
     assert!(db.find_user_by_id(other).await.unwrap().is_some());
     assert_eq!(
-        db.delete_account(id, "$hash", |_| false).await.unwrap(),
+        db.delete_account(id, "$hash", |_| false, now())
+            .await
+            .unwrap(),
         DeleteOutcome::Gone
     );
 }
@@ -96,12 +101,16 @@ async fn deletion_refuses_the_administrator_and_a_password_changed_meanwhile() {
     let ala = add_user(&db, "ala@example.com", "Ala", "ala").await;
     let protect = |email: &str| email == "admin@example.com";
     assert_eq!(
-        db.delete_account(admin, "$hash", protect).await.unwrap(),
+        db.delete_account(admin, "$hash", protect, now())
+            .await
+            .unwrap(),
         DeleteOutcome::Protected
     );
     assert!(db.find_user_by_id(admin).await.unwrap().is_some());
     assert_eq!(
-        db.delete_account(ala, "$stale", protect).await.unwrap(),
+        db.delete_account(ala, "$stale", protect, now())
+            .await
+            .unwrap(),
         DeleteOutcome::HashChanged
     );
     assert!(db.find_user_by_id(ala).await.unwrap().is_some());

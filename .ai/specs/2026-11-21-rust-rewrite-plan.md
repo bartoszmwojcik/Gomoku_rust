@@ -150,7 +150,7 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Wynik pokrycia: core 100%, db ≈ 86%, web ≈ 94% (linie).
 - Nie zrobione w F0: `om-setup-agent-pipeline` (po zielonym CI na PR), `cargo audit` (osobny job informacyjny), Tailwind CLI
   (na razie ręczny `assets/app.css` z tokenami; decyzja przy pierwszym prawdziwym ekranie w F2).
-- Do usunięcia przy F2/F3: strony `/spike/*` (tymczasowe).
+- Strony `/spike/*` usunięte w F3.
 
 ### F1 (2026-11-21) — w PR `feat/f1-domain-core`
 
@@ -215,3 +215,11 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
   oczekujących partii i czatu przy usunięciu konta, reguły sprzątania gier/czatu/gości, warunek „bez żadnej partii” dla niepotwierdzonych kont.
 - Odstępstwo: `ADMIN_EMAIL` pozostaje opcjonalny (w Node wymagany w produkcji); zrobimy go wymaganym razem z panelem administratora (F8).
 - **F2 zamknięte:** konta, sesje, hasła, e-maile, nazwa, usunięcie, sprzątanie, administrator, i18n (fundament).
+
+### F3 — Gra 1:1 (zrobione, jeden PR)
+
+- Rdzeń (`gomoku-core::game`): losowanie stron, tokeny gościa, wygasanie zaproszeń, rewanż, widok planszy, odtwarzanie partii.
+- Baza (migracja 0005): `games` (ruchy jako `bytea`), `game_players`, `invitations`, `lobby_seekers`, `game_pair_counters`; przejścia leniwe (wygaśnięcie, brak otwarcia, timeouty) i warunkowe UPDATE-y z blokadami wierszy; reguła G5; sprzątanie rozszerzone do 13 reguł; usunięcie konta rozlicza partie.
+- Web: `/api/games*`, `/api/invitations/{code}/accept`, `/api/lobby*`, `/api/history`; strony `/play /join /invite/{code} /games/{id} /games/{id}/review /lobby /history`; skrypty `game-room.js`, `lobby.js`, `history.js`, `review.js`.
+- Weryfikacja: testy HTTP/DB (w tym wyścigi), `pages_games.rs`, ręcznie w przeglądarce (dwie sesje: zaproszenie, partia do pięciu, rewanż, poddanie, lobby, historia, przegląd, gość). Pokrycie: core 100%, db 96%, web 96% (`scripts/coverage.sh`).
+- Nie sprawdzono: dotyk (wybór i potwierdzenie ruchu) i widok mobilny w prawdziwej przeglądarce; scenariusz integracyjny agent-browser nie jest jeszcze zautomatyzowany.

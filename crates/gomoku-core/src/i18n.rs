@@ -46,6 +46,60 @@ impl Locale {
     }
 }
 
+/// CLDR plural category of a count, for the languages of the interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plural {
+    One,
+    Few,
+    Many,
+    Other,
+}
+
+impl Plural {
+    /// The suffix of a catalog key: `key.one`, `key.few`, `key.many`, `key.other`.
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Plural::One => "one",
+            Plural::Few => "few",
+            Plural::Many => "many",
+            Plural::Other => "other",
+        }
+    }
+}
+
+impl Locale {
+    /// The plural category of `n` in this language (integers only).
+    pub fn plural(self, n: u64) -> Plural {
+        match self {
+            Locale::Pl => {
+                if n == 1 {
+                    Plural::One
+                } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
+                    Plural::Few
+                } else {
+                    Plural::Many
+                }
+            }
+            Locale::Fr => {
+                if n <= 1 {
+                    Plural::One
+                } else if n != 0 && n.is_multiple_of(1_000_000) {
+                    Plural::Many
+                } else {
+                    Plural::Other
+                }
+            }
+            Locale::En | Locale::De => {
+                if n == 1 {
+                    Plural::One
+                } else {
+                    Plural::Other
+                }
+            }
+        }
+    }
+}
+
 const ACCEPT_LANGUAGE_MAX_LENGTH: usize = 256;
 const ACCEPT_LANGUAGE_MAX_ENTRIES: usize = 20;
 
@@ -103,6 +157,60 @@ mod tests {
         for bad in ["", "PL", "pl-PL", "xx", " fr"] {
             assert_eq!(Locale::from_code(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn plural_categories_follow_each_language() {
+        let pl = |n| Locale::Pl.plural(n);
+        assert_eq!(
+            (
+                pl(1),
+                pl(2),
+                pl(4),
+                pl(5),
+                pl(12),
+                pl(14),
+                pl(22),
+                pl(10),
+                pl(0)
+            ),
+            (
+                Plural::One,
+                Plural::Few,
+                Plural::Few,
+                Plural::Many,
+                Plural::Many,
+                Plural::Many,
+                Plural::Few,
+                Plural::Many,
+                Plural::Many
+            )
+        );
+        assert_eq!(
+            (
+                Locale::En.plural(1),
+                Locale::En.plural(0),
+                Locale::En.plural(10)
+            ),
+            (Plural::One, Plural::Other, Plural::Other)
+        );
+        assert_eq!(
+            (Locale::De.plural(1), Locale::De.plural(2)),
+            (Plural::One, Plural::Other)
+        );
+        assert_eq!(
+            (
+                Locale::Fr.plural(0),
+                Locale::Fr.plural(1),
+                Locale::Fr.plural(2),
+                Locale::Fr.plural(1_000_000)
+            ),
+            (Plural::One, Plural::One, Plural::Other, Plural::Many)
+        );
+        assert_eq!(
+            [Plural::One, Plural::Few, Plural::Many, Plural::Other].map(Plural::suffix),
+            ["one", "few", "many", "other"]
+        );
     }
 
     #[test]

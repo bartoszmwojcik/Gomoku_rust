@@ -1,11 +1,10 @@
-//! Server-rendered pages (Askama) with htmx: home, sign up, log in, account, and the board spike.
+//! Server-rendered pages (Askama): home, sign up, log in, account and the account-related screens.
 
 use askama::Template;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
-use gomoku_core::CLASSIC_BOARD_SIZE;
 use gomoku_core::auth::safe_next_path;
 use gomoku_core::validators::is_installation_admin;
 use serde::Deserialize;
@@ -16,7 +15,10 @@ use crate::routes_email::display_name_available_at;
 use crate::session::{CurrentUser, current_user, require_page_session};
 
 /// What every page needs: the texts, the signed-in user (if any) and the current path.
+#[derive(Clone)]
 pub struct Ctx {
+    /// Texts for the scripts that render screens in the browser (full keys), when the page has such a script.
+    pub bag: String,
     pub tr: Translator,
     pub user: Option<CurrentUser>,
     pub path: &'static str,
@@ -27,10 +29,11 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    fn new(tr: Translator, user: Option<CurrentUser>, path: &'static str) -> Self {
+    pub(crate) fn new(tr: Translator, user: Option<CurrentUser>, path: &'static str) -> Self {
         let errors_json = tr.subtree_json("errors.");
         let user_id = user.as_ref().map(|u| u.id.to_string()).unwrap_or_default();
         Self {
+            bag: String::new(),
             tr,
             user,
             path,
@@ -40,8 +43,14 @@ impl Ctx {
         }
     }
 
+    /// Adds the texts a page script needs.
+    pub(crate) fn with_bag(mut self, prefixes: &[&str]) -> Self {
+        self.bag = self.tr.bag_json(prefixes);
+        self
+    }
+
     /// Shows the e-mail confirmation reminder when the signed-in player has not confirmed the address.
-    fn with_banner(mut self) -> Self {
+    pub(crate) fn with_banner(mut self) -> Self {
         self.banner = self
             .user
             .as_ref()
@@ -55,6 +64,9 @@ impl Ctx {
 struct HomePage {
     ctx: Ctx,
     signed_in_as: Option<String>,
+    /// The game that holds the player's slot: its id and the text for its phase.
+    current: Option<(String, String)>,
+    cancelled_notice: bool,
 }
 
 #[derive(Template)]
@@ -113,22 +125,7 @@ struct ResetPasswordPage {
     token: String,
 }
 
-#[derive(Template)]
-#[template(path = "board.html")]
-struct BoardPage {
-    ctx: Ctx,
-    rows: Vec<usize>,
-    cols: Vec<usize>,
-}
-
-#[derive(Template)]
-#[template(path = "clock.html")]
-struct ClockFragment {
-    minutes: i64,
-    seconds: i64,
-}
-
-fn render<T: Template>(template: &T) -> Response {
+pub(crate) fn render<T: Template>(template: &T) -> Response {
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(err) => {
@@ -143,15 +140,54 @@ pub struct NextQuery {
     next: Option<String>,
 }
 
-pub async fn home(State(state): State<AppState>, Lang(locale): Lang, jar: CookieJar) -> Response {
+#[derive(Deserialize, Default)]
+pub struct HomeQuery {
+    notice: Option<String>,
+}
+
+pub async fn home(
+    State(state): State<AppState>,
+    Lang(locale): Lang,
+    jar: CookieJar,
+    Query(query): Query<HomeQuery>,
+) -> Response {
     let tr = state.catalogs.translator(locale);
     let user = current_user(&state, &jar).await;
     let signed_in_as = user
         .as_ref()
         .map(|u| tr.t_with("home.signedIn", &[("name", &u.display_name)]));
+    let now = (state.clock)();
+    // The slot is judged after the lazy closings, so a dead game never shows up here.
+    let current = match &user {
+        Some(user) => state.db.current_game(user.id, now).await.ok().flatten(),
+        None => match crate::guest::guest_token_hash(&jar, state.config.session_cookie_secure) {
+            Some(hash) => state
+                .db
+                .current_game_of_guest(&hash, now)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        },
+    };
+    let current = current.map(|game| {
+        let key = format!(
+            "home.page.{}.{}",
+            if user.is_some() {
+                "phase"
+            } else {
+                "guestPhase"
+            },
+            game.status.as_str()
+        );
+        (game.game_id.to_string(), tr.t(&key))
+    });
+    let cancelled_notice = query.notice.as_deref() == Some("cancelled");
     render(&HomePage {
         ctx: Ctx::new(tr, user, "/").with_banner(),
         signed_in_as,
+        current,
+        cancelled_notice,
     })
 }
 
@@ -279,7 +315,7 @@ pub async fn confirm_email_change(
     no_referrer(render(&page))
 }
 
-fn no_referrer(mut response: Response) -> Response {
+pub(crate) fn no_referrer(mut response: Response) -> Response {
     response.headers_mut().insert(
         axum::http::header::REFERRER_POLICY,
         axum::http::HeaderValue::from_static("no-referrer"),
@@ -316,23 +352,4 @@ pub async fn reset_password(
         token: query.token.unwrap_or_default(),
     };
     no_referrer(render(&page))
-}
-
-pub async fn board(State(state): State<AppState>, Lang(locale): Lang, jar: CookieJar) -> Response {
-    let axis: Vec<usize> = (0..CLASSIC_BOARD_SIZE).collect();
-    let user = current_user(&state, &jar).await;
-    render(&BoardPage {
-        ctx: Ctx::new(state.catalogs.translator(locale), user, "/spike/board"),
-        rows: axis.clone(),
-        cols: axis,
-    })
-}
-
-/// Demo clock fragment polled by htmx: counts down from 10:00 using the server's time.
-pub async fn clock(State(state): State<AppState>) -> Response {
-    let left = 600 - (state.clock)().unix_timestamp().rem_euclid(600);
-    render(&ClockFragment {
-        minutes: left / 60,
-        seconds: left % 60,
-    })
 }

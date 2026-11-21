@@ -1,0 +1,15 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("home.join.heading") }}{% endblock %}
+{% block head %}<script src="/assets/join.js" defer></script>{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("home.join.heading") }}</h1>
+<form data-testid="join-form" id="join-form" novalidate>
+  <label for="join-code">{{ ctx.tr.t("home.join.label") }}
+    <input id="join-code" type="text" placeholder="ABCD-EFGH" autocapitalize="characters" spellcheck="false" autocomplete="off" data-testid="code">
+  </label>
+  <small>{{ hint }}</small>
+  <p id="join-error" role="alert" data-testid="join-error"></p>
+  <button type="submit" data-testid="join-next">{{ ctx.tr.t("home.join.next") }}</button>
+</form>
+<p><a href="/">{{ ctx.tr.t("home.shared.back") }}</a></p>
+{% endblock %}

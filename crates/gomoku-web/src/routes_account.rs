@@ -22,6 +22,7 @@ pub const ACCOUNT_DELETE_WINDOW_MS: i64 = 15 * 60 * 1000;
 
 pub const INVALID_PASSWORD_MESSAGE: &str = "Nieprawidłowe hasło.";
 pub const CONFIRM_MESSAGE: &str = "Zaznacz potwierdzenie, aby usunąć konto.";
+pub const ACTIVE_GAME_MESSAGE: &str = "Najpierw dokończ albo poddaj partię.";
 pub const ADMIN_ACCOUNT_PROTECTED_MESSAGE: &str = "Tego konta nie można usunąć.";
 
 fn invalid_password() -> ApiError {
@@ -131,9 +132,12 @@ async fn try_delete(
     }
     let outcome = state
         .db
-        .delete_account(user.id, &stored.password_hash, |email| {
-            is_installation_admin(email, admin.as_deref())
-        })
+        .delete_account(
+            user.id,
+            &stored.password_hash,
+            |email| is_installation_admin(email, admin.as_deref()),
+            (state.clock)(),
+        )
         .await;
     match outcome {
         Ok(DeleteOutcome::Deleted) => {
@@ -145,13 +149,21 @@ async fn try_delete(
             release().await;
             Err((admin_protected(), false))
         }
+        Ok(DeleteOutcome::ActiveGame(game_id)) => {
+            release().await;
+            Err((
+                ApiError::conflict("ACTIVE_GAME", ACTIVE_GAME_MESSAGE)
+                    .with_data(json!({ "gameId": game_id })),
+                false,
+            ))
+        }
         Ok(DeleteOutcome::Gone) => {
             release().await;
             Err((ApiError::unauthorized(), true))
         }
         Err(error) => {
             release().await;
-            Err((db_failure(error), false))
+            Err((ApiError::from(error), false))
         }
     }
 }

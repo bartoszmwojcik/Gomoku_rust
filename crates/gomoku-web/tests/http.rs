@@ -24,28 +24,15 @@ async fn health_is_503_and_hides_the_error_detail() {
 }
 
 #[tokio::test]
-async fn board_page_has_225_cells_and_the_clock_counts_down_from_server_time() {
-    let app = TestApp::without_database(Ok(()));
-    let reply = app.client().get("/spike/board").await;
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.body.matches(r#"class="cell""#).count(), 15 * 15);
-    assert!(reply.body.contains(r#"hx-get="/spike/clock""#));
-    // 1_800_000_000 is divisible by 600: the clock starts full.
-    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "10:00");
-    app.advance_seconds(541);
-    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:59");
-    app.advance_seconds(49);
-    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:10");
-    app.advance_seconds(5);
-    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:05");
-}
-
-#[tokio::test]
 async fn serves_static_assets_and_404s_unknown_paths() {
     let app = TestApp::without_database(Ok(()));
     let reply = app.client().get("/assets/forms.js").await;
     assert_eq!(reply.status, StatusCode::OK);
     assert!(reply.body.contains("data-api"));
+    assert_eq!(
+        app.client().get("/assets/gomoku.js").await.status,
+        StatusCode::OK
+    );
     assert_eq!(
         app.client().get("/nope").await.status,
         StatusCode::NOT_FOUND
@@ -106,7 +93,7 @@ async fn an_unsupported_lang_is_only_dropped_and_api_and_assets_are_left_alone()
         StatusCode::OK
     );
     assert_eq!(
-        app.client().get("/assets/board.js?lang=fr").await.status,
+        app.client().get("/assets/gomoku.js?lang=fr").await.status,
         StatusCode::OK
     );
 }

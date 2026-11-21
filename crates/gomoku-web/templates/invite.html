@@ -1,0 +1,58 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("home.meta.invite") }}{% endblock %}
+{% block content %}
+<div data-testid="invite-page" data-state="{{ state }}">
+<h1>{{ heading }}</h1>
+{% if state == "limit" %}
+<section class="alert danger" role="alert"><strong>{{ ctx.tr.t("home.shared.tooManyAttempts.title") }}</strong> {{ ctx.tr.t("home.shared.tooManyAttempts.body") }}</section>
+{% else if state == "invalid" %}
+<section class="alert danger" role="alert"><strong>{{ ctx.tr.t("home.invite.invalidTitle") }}</strong> {{ ctx.tr.t("home.invite.invalidBody") }}</section>
+<p><a href="/join">{{ ctx.tr.t("home.shared.haveCode") }}</a> · <a href="/">{{ ctx.tr.t("home.shared.backHome") }}</a></p>
+{% else %}
+<p data-testid="code-line">{{ code_line }}</p>
+{% if state == "has-active-game" %}
+<section class="alert warning" role="alert"><strong>{{ ctx.tr.t("home.shared.activeGame.title") }}</strong> {{ ctx.tr.t("home.invite.oneGame") }}</section>
+<p><a href="/games/{{ game_id }}">{{ ctx.tr.t("home.invite.backToOwn") }}</a></p>
+{% else if state == "has-own-waiting-game" %}
+<section class="alert warning" role="alert"><strong>{{ ctx.tr.t("home.shared.ownWaiting") }}</strong> {{ ctx.tr.t("home.invite.swapFirst") }}</section>
+<form data-api="/api/invitations/{{ code }}/accept" data-redirect-game data-testid="swap-form" novalidate>
+  <p data-form-error role="alert"></p>
+  <input type="hidden" name="as" value="{% if viewer == "guest" %}guest{% else %}user{% endif %}">
+  {% if viewer == "guest" %}<input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">{% endif %}
+  <input type="hidden" name="cancelOwnWaitingGame" value="true" data-json="bool">
+  <button type="submit" data-testid="swap">{{ ctx.tr.t("home.joinActions.swap") }}</button>
+</form>
+<p><a href="/games/{{ game_id }}">{{ ctx.tr.t("home.invite.backToOwn") }}</a></p>
+{% else %}
+{% if viewer == "account" %}
+<form data-api="/api/invitations/{{ code }}/accept" data-redirect-game data-refresh-on="INVALID_INVITATION OWN_INVITATION OWN_WAITING_GAME ACTIVE_GAME_EXISTS GUEST_NOT_ALLOWED" data-testid="join-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <input type="hidden" name="as" value="user">
+  <button type="submit" data-testid="join">{{ ctx.tr.t("home.joinActions.join") }}</button>
+</form>
+{% else %}
+<p>
+  <a class="button" href="/login?next={{ next|urlencode_strict }}" data-testid="invite-login">{{ ctx.tr.t("home.shared.login") }}</a>
+  <a class="button" href="/register?next={{ next|urlencode_strict }}" data-testid="invite-register">{{ ctx.tr.t("home.shared.register") }}</a>
+</p>
+<details data-testid="guest-step">
+  <summary data-testid="play-as-guest">{{ ctx.tr.t("home.joinActions.playAsGuest") }}</summary>
+  <section class="alert warning" role="note"><strong>{{ ctx.tr.t("home.shared.guestWarningTitle") }}</strong> {{ ctx.tr.t("home.joinActions.guestWarningBody") }}</section>
+  <form data-api="/api/invitations/{{ code }}/accept" data-redirect-game data-refresh-on="INVALID_INVITATION OWN_INVITATION OWN_WAITING_GAME ACTIVE_GAME_EXISTS GUEST_NOT_ALLOWED" data-testid="guest-join-form" novalidate>
+    <p data-form-error role="alert" data-testid="form-error"></p>
+    <input type="hidden" name="as" value="guest">
+    <input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">
+    <label for="invite-nickname">{{ ctx.tr.t("home.shared.nickname") }} <small>{{ ctx.tr.t("home.shared.optional") }}</small>
+      <input id="invite-nickname" type="text" name="nickname" maxlength="48" autocomplete="nickname" data-testid="nickname">
+    </label>
+    <small>{{ hint }}</small>
+    <p data-error-for="nickname" role="alert"></p>
+    <button type="submit" data-testid="guest-join">{{ ctx.tr.t("home.joinActions.confirmGuest") }}</button>
+  </form>
+</details>
+<p><small>{{ ctx.tr.t("home.joinActions.accountHint") }}</small></p>
+{% endif %}
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}

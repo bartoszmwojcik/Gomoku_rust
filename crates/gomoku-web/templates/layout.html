@@ -6,7 +6,7 @@
   <title>{% block title %}{{ ctx.tr.t("app.name") }}{% endblock %}</title>
   <link rel="stylesheet" href="/assets/game-tokens.css">
   <link rel="stylesheet" href="/assets/app.css">
-  <script src="/assets/htmx.min.js" defer></script>
+  <script src="/assets/i18n.js" defer></script>
   <script src="/assets/forms.js" defer></script>
   {% block head %}{% endblock %}
 </head>
@@ -46,6 +46,7 @@
   <script src="/assets/banner.js" defer></script>
   {% endif %}
   <main>{% block content %}{% endblock %}</main>
+  {% if !ctx.bag.is_empty() %}<script type="application/json" id="i18n-bag">{{ ctx.bag|safe }}</script>{% endif %}
   <script type="application/json" id="i18n-errors">{{ ctx.errors_json|safe }}</script>
   <script type="application/json" id="i18n-form" data-sending="{{ ctx.tr.t("form.sending") }}" data-network="{{ ctx.tr.t("form.networkError") }}" data-unexpected="{{ ctx.tr.t("form.unexpectedError") }}"></script>
 </body>

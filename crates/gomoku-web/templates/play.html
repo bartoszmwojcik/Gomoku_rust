@@ -1,0 +1,47 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("home.meta.play") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("home.play.heading") }}</h1>
+{% if signed_in %}
+<section class="alert" role="status" data-testid="play-signed-in">
+  <strong>{{ ctx.tr.t("home.play.signedInTitle") }}</strong>
+  <p>{{ ctx.tr.t("home.play.signedInBody") }}</p>
+</section>
+<p><a href="/">{{ ctx.tr.t("home.shared.backHome") }}</a></p>
+{% else %}
+<section class="alert warning" role="note">
+  <strong>{{ ctx.tr.t("home.shared.guestWarningTitle") }}</strong>
+  <p>{{ ctx.tr.t("home.play.warningBody") }}</p>
+</section>
+<form data-api="/api/games" data-redirect-game data-testid="guest-form" data-reveal-OWN_WAITING_GAME="#own-waiting" data-reveal-ACTIVE_GAME_EXISTS="#active-game" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label for="guest-nickname">{{ ctx.tr.t("home.shared.nickname") }} <small>{{ ctx.tr.t("home.shared.optional") }}</small>
+    <input id="guest-nickname" type="text" name="nickname" maxlength="48" autocomplete="nickname" data-testid="nickname">
+  </label>
+  <small>{{ hint }}</small>
+  <p data-error-for="nickname" role="alert"></p>
+  <input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">
+  <p>{{ ctx.tr.t("home.play.validFor") }}</p>
+  <button type="submit" data-testid="guest-create">{{ ctx.tr.t("home.play.confirmInvitation") }}</button>
+</form>
+<section id="active-game" class="alert warning" role="alert" hidden data-testid="active-game">
+  <strong>{{ ctx.tr.t("home.shared.activeGame.title") }}</strong> {{ ctx.tr.t("home.shared.activeGame.body") }}
+  <a href="/" data-game-link>{{ ctx.tr.t("home.shared.goToGame") }}</a>
+</section>
+<section id="own-waiting" class="alert warning" role="alert" hidden data-testid="own-waiting">
+  <strong>{{ ctx.tr.t("home.shared.ownWaiting") }}</strong> {{ ctx.tr.t("home.play.waitingBody") }}
+  <a href="/" data-game-link>{{ ctx.tr.t("home.shared.backToGame") }}</a>
+  <details>
+    <summary data-testid="guest-cancel-own">{{ ctx.tr.t("home.play.cancelAndCreate") }}</summary>
+    <p>{{ ctx.tr.t("home.play.dialog.description") }}</p>
+    <form data-api="/api/games" data-redirect-game novalidate>
+      <p data-form-error role="alert"></p>
+      <input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">
+      <input type="hidden" name="cancelOwnWaitingGame" value="true" data-json="bool">
+      <button type="submit">{{ ctx.tr.t("home.play.dialog.confirm") }}</button>
+    </form>
+  </details>
+</section>
+<p><a href="/">{{ ctx.tr.t("home.shared.back") }}</a></p>
+{% endif %}
+{% endblock %}
