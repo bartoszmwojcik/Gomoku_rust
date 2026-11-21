@@ -43,6 +43,13 @@ pub fn is_reserved_display_name(normalized: &str) -> bool {
     RESERVED_DISPLAY_NAMES.contains(&normalized)
 }
 
+/// The installation administrator is the account whose e-mail equals `ADMIN_EMAIL` (no role column). Both sides
+/// are compared normalized; without a configured administrator nobody is one.
+pub fn is_installation_admin(email: &str, admin_email: Option<&str>) -> bool {
+    admin_email
+        .is_some_and(|admin| !admin.is_empty() && normalize_email(email) == normalize_email(admin))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,6 +67,24 @@ mod tests {
         );
         assert_eq!(normalize_display_name("Usunięty gracz"), "usuniety gracz");
         assert_eq!(normalize_display_name("ĄĆĘŁŃÓŚŹŻ"), "acelnoszz");
+    }
+
+    #[test]
+    fn the_administrator_is_found_by_normalized_email() {
+        assert!(is_installation_admin(
+            " Admin@Example.com ",
+            Some("admin@example.com")
+        ));
+        assert!(is_installation_admin(
+            "admin@example.com",
+            Some("ADMIN@example.com ")
+        ));
+        assert!(!is_installation_admin(
+            "other@example.com",
+            Some("admin@example.com")
+        ));
+        assert!(!is_installation_admin("admin@example.com", None));
+        assert!(!is_installation_admin("", Some("")));
     }
 
     #[test]

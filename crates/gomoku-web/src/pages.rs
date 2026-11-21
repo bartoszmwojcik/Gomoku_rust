@@ -7,10 +7,12 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use gomoku_core::CLASSIC_BOARD_SIZE;
 use gomoku_core::auth::safe_next_path;
+use gomoku_core::validators::is_installation_admin;
 use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::i18n::{Lang, Translator};
+use crate::routes_email::display_name_available_at;
 use crate::session::{CurrentUser, current_user, require_page_session};
 
 /// What every page needs: the texts, the signed-in user (if any) and the current path.
@@ -19,17 +21,32 @@ pub struct Ctx {
     pub user: Option<CurrentUser>,
     pub path: &'static str,
     pub errors_json: String,
+    /// The reminder to confirm the e-mail address (home and account, for an unconfirmed signed-in player).
+    pub banner: bool,
+    pub user_id: String,
 }
 
 impl Ctx {
     fn new(tr: Translator, user: Option<CurrentUser>, path: &'static str) -> Self {
         let errors_json = tr.subtree_json("errors.");
+        let user_id = user.as_ref().map(|u| u.id.to_string()).unwrap_or_default();
         Self {
             tr,
             user,
             path,
             errors_json,
+            banner: false,
+            user_id,
         }
+    }
+
+    /// Shows the e-mail confirmation reminder when the signed-in player has not confirmed the address.
+    fn with_banner(mut self) -> Self {
+        self.banner = self
+            .user
+            .as_ref()
+            .is_some_and(|u| u.email_verified_at.is_none());
+        self
     }
 }
 
@@ -61,6 +78,26 @@ struct AccountPage {
     display_name: String,
     email: String,
     verified: bool,
+    /// When the name may be changed again, if it may not be now (UTC, for display).
+    name_cooldown: Option<String>,
+    /// The administrator's address never changes through the app.
+    email_locked: bool,
+}
+
+#[derive(Template)]
+#[template(path = "verify_email.html")]
+struct VerifyEmailPage {
+    ctx: Ctx,
+    token: String,
+    next: String,
+    can_resend: bool,
+}
+
+#[derive(Template)]
+#[template(path = "confirm_email_change.html")]
+struct ConfirmEmailChangePage {
+    ctx: Ctx,
+    token: String,
 }
 
 #[derive(Template)]
@@ -113,7 +150,7 @@ pub async fn home(State(state): State<AppState>, Lang(locale): Lang, jar: Cookie
         .as_ref()
         .map(|u| tr.t_with("home.signedIn", &[("name", &u.display_name)]));
     render(&HomePage {
-        ctx: Ctx::new(tr, user, "/"),
+        ctx: Ctx::new(tr, user, "/").with_banner(),
         signed_in_as,
     })
 }
@@ -157,6 +194,18 @@ pub async fn register(
     })
 }
 
+fn format_utc(at: gomoku_db::OffsetDateTime) -> String {
+    let at = at.to_offset(time::UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} UTC",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute()
+    )
+}
+
 pub async fn account(
     State(state): State<AppState>,
     Lang(locale): Lang,
@@ -166,13 +215,76 @@ pub async fn account(
         Ok(user) => user,
         Err(redirect) => return redirect.into_response(),
     };
+    let changed_at = match state.db.find_user_by_id(user.id).await {
+        Ok(stored) => stored.and_then(|u| u.display_name_changed_at),
+        Err(error) => {
+            tracing::error!(error = ?error, "account lookup failed");
+            None
+        }
+    };
+    let name_cooldown = display_name_available_at(changed_at, (state.clock)()).map(format_utc);
+    let email_locked = is_installation_admin(&user.email, state.config.admin_email.as_deref());
     let page = AccountPage {
         display_name: user.display_name.clone(),
         email: user.email.clone(),
         verified: user.email_verified_at.is_some(),
-        ctx: Ctx::new(state.catalogs.translator(locale), Some(user), "/account"),
+        name_cooldown,
+        email_locked,
+        ctx: Ctx::new(state.catalogs.translator(locale), Some(user), "/account").with_banner(),
     };
     render(&page)
+}
+
+#[derive(Deserialize, Default)]
+pub struct VerifyQuery {
+    token: Option<String>,
+    next: Option<String>,
+}
+
+/// The link from the confirmation e-mail. A GET changes nothing (mail scanners and link previews open addresses):
+/// the page shows a button, and only its click confirms. The token is in the address, so the page must not leak it
+/// through `Referer`.
+pub async fn verify_email(
+    State(state): State<AppState>,
+    Lang(locale): Lang,
+    jar: CookieJar,
+    Query(query): Query<VerifyQuery>,
+) -> Response {
+    let user = current_user(&state, &jar).await;
+    let can_resend = user.as_ref().is_some_and(|u| u.email_verified_at.is_none());
+    let page = VerifyEmailPage {
+        ctx: Ctx::new(state.catalogs.translator(locale), user, "/verify-email"),
+        token: query.token.unwrap_or_default(),
+        next: safe_next_path(query.next.as_deref()),
+        can_resend,
+    };
+    no_referrer(render(&page))
+}
+
+pub async fn confirm_email_change(
+    State(state): State<AppState>,
+    Lang(locale): Lang,
+    jar: CookieJar,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    let user = current_user(&state, &jar).await;
+    let page = ConfirmEmailChangePage {
+        ctx: Ctx::new(
+            state.catalogs.translator(locale),
+            user,
+            "/confirm-email-change",
+        ),
+        token: query.token.unwrap_or_default(),
+    };
+    no_referrer(render(&page))
+}
+
+fn no_referrer(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
+    response
 }
 
 pub async fn forgot_password(
@@ -203,12 +315,7 @@ pub async fn reset_password(
         ctx: Ctx::new(state.catalogs.translator(locale), user, "/reset-password"),
         token: query.token.unwrap_or_default(),
     };
-    let mut response = render(&page);
-    response.headers_mut().insert(
-        axum::http::header::REFERRER_POLICY,
-        axum::http::HeaderValue::from_static("no-referrer"),
-    );
-    response
+    no_referrer(render(&page))
 }
 
 pub async fn board(State(state): State<AppState>, Lang(locale): Lang, jar: CookieJar) -> Response {

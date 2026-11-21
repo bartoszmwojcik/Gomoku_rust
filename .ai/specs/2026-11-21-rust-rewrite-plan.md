@@ -190,3 +190,15 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Znalezione testami: `tokio::fs::File` bez `flush()` gubi dane przy zamknięciu (transport plikowy).
 - Odstępstwa: link w e-mailu bez `APP_ORIGIN` wskazuje `http://localhost:3000` (jak w Node), więc lokalnie ustaw `APP_ORIGIN`.
 - Zostaje na F2c: potwierdzenie e-maila (pula 70% dziennego limitu), zmiana e-maila i nazwy; F2d: usunięcie konta, sprzątanie, administrator.
+
+### F2c (2026-11-21) — w PR `feat/f2c-email-and-name`
+
+- Zrobione: potwierdzenie e-maila (wysyłka po rejestracji bez wpływu na `201`; ponowna wysyłka 3/h na konto i 10/h na adres; pula dzienna 70% z minimum 1;
+  potwierdzenie po kliknięciu przycisku, GET niczego nie zmienia; `next` przez `safe_next_path`), zmiana e-maila (hasło we wspólnej puli prób ze zmianą hasła,
+  zawsze `202`, link na nowy adres, kończy wszystkie sesje, powiadomienie na stary adres tylko gdy był potwierdzony), zmiana nazwy gracza (raz na dobę,
+  warunkowy `UPDATE`, stara nazwa zwalnia się), baner przypomnienia (zamknięcie pamiętane 7 dni w `localStorage`), strony `/verify-email`,
+  `/confirm-email-change`, formularze na `/account`, tabele `email_verification_tokens` i `email_change_tokens` (migracja 0004), teksty PL/EN/FR.
+- Zmiana i reset hasła unieważniają teraz także linki zmiany e-maila (jak `invalidateResetTokens` w Node).
+- `ADMIN_EMAIL` (opcjonalny do F8): nikt nie rejestruje się na tym adresie, adres administratora nie zmienia się i nie można na niego zmienić cudzego.
+- Odstępstwo: limity prób liczy czas bazy (`now()`), nie zegar aplikacji; testy rozdzielają adresy klientów (`TRUST_PROXY_HOPS=1` + `X-Forwarded-For`).
+- Zostaje na F2d: usunięcie konta z anonimizacją (wymaga gier z F3 do pełnej reguły „partia w toku”), sprzątanie wygasłych rekordów, konto administratora (CLI).

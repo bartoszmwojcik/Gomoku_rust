@@ -93,6 +93,9 @@ pub struct AppConfig {
     pub session_cookie_secure: bool,
     pub password: PasswordParams,
     pub email: EmailConfig,
+    /// E-mail of the installation administrator (`ADMIN_EMAIL`, normalized): nobody can register on it and its
+    /// address never changes through the app. Optional until the administrator panel arrives.
+    pub admin_email: Option<String>,
 }
 
 fn positive(
@@ -201,6 +204,9 @@ impl AppConfig {
             session_cookie_secure,
             password,
             email,
+            admin_email: lookup("ADMIN_EMAIL")
+                .map(|raw| gomoku_core::validators::normalize_email(&raw))
+                .filter(|email| !email.is_empty()),
         })
     }
 }
@@ -330,6 +336,19 @@ mod tests {
         assert!(!format!("{cfg:?}").contains("xkeysib-secret"));
         let file = AppConfig::from_lookup(env(&[("EMAIL_TRANSPORT", "file")])).unwrap();
         assert_eq!(file.email.transport, Some(EmailTransport::File));
+    }
+
+    #[test]
+    fn the_administrator_email_is_normalized_and_optional() {
+        assert_eq!(AppConfig::from_lookup(env(&[])).unwrap().admin_email, None);
+        assert_eq!(
+            AppConfig::from_lookup(env(&[("ADMIN_EMAIL", "  ")]))
+                .unwrap()
+                .admin_email,
+            None
+        );
+        let cfg = AppConfig::from_lookup(env(&[("ADMIN_EMAIL", " Admin@Example.com ")])).unwrap();
+        assert_eq!(cfg.admin_email.as_deref(), Some("admin@example.com"));
     }
 
     #[test]

@@ -190,17 +190,40 @@ impl TestApp {
         self.mail.sent.lock().unwrap().clone()
     }
 
+    /// A real hash of `password` with the test parameters.
+    pub async fn hash_password(&self, password: &str) -> String {
+        let config = fast_config(&[]);
+        PasswordHasher::new(config.password)
+            .unwrap()
+            .hash(password)
+            .await
+            .unwrap()
+    }
+
     pub fn advance_seconds(&self, seconds: i64) {
         let mut now = self.clock.lock().unwrap();
         *now += time::Duration::seconds(seconds);
     }
 
     pub fn client(&self) -> Client {
-        Client {
-            router: self.router.clone(),
-            cookies: Vec::new(),
-            headers: Vec::new(),
-        }
+        Client::for_router(self.router.clone())
+    }
+
+    /// A second router over the same database and mailbox with other settings (e.g. an administrator).
+    pub fn router_with(&self, overrides: &[(&str, &str)]) -> Router {
+        let config = fast_config(overrides);
+        let clock = Arc::clone(&self.clock);
+        let state = AppState {
+            hasher: PasswordHasher::new(config.password).unwrap(),
+            health: Arc::new(FakeProbe(Ok(()))),
+            db: self.db.clone(),
+            clock: Arc::new(move || *clock.lock().unwrap()),
+            catalogs: Catalogs::embedded().unwrap(),
+            email: self.mail.clone(),
+            tasks: self.tasks.clone(),
+            config: Arc::new(config.clone()),
+        };
+        build_router(state, &config.assets_dir)
     }
 }
 
@@ -242,6 +265,14 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn for_router(router: Router) -> Self {
+        Self {
+            router,
+            cookies: Vec::new(),
+            headers: Vec::new(),
+        }
+    }
+
     pub fn with_header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.to_owned(), value.to_owned()));
         self
@@ -309,6 +340,15 @@ impl Client {
     /// A JSON POST with the CSRF headers a browser form would send.
     pub async fn post(&mut self, uri: &str, body: Value) -> Reply {
         let request = Request::post(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ORIGIN, ORIGIN)
+            .header("x-gomoku-request", "1");
+        self.send(request, Body::from(body.to_string())).await
+    }
+
+    /// A JSON PATCH with the CSRF headers a browser form would send.
+    pub async fn patch(&mut self, uri: &str, body: Value) -> Reply {
+        let request = Request::patch(uri)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ORIGIN, ORIGIN)
             .header("x-gomoku-request", "1");

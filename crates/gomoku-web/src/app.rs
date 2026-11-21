@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use gomoku_db::Database;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -15,7 +15,7 @@ use crate::email::EmailSender;
 use crate::health::{HealthProbe, health};
 use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
-use crate::{pages, routes_auth, routes_password};
+use crate::{pages, routes_auth, routes_email, routes_password};
 
 /// Shared application state: explicit composition instead of a DI container.
 #[derive(Clone)]
@@ -45,12 +45,34 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
             "/auth/password-reset/confirm",
             post(routes_password::reset_confirm),
         )
+        .route(
+            "/auth/email-verification/resend",
+            post(routes_email::resend),
+        )
+        .route(
+            "/auth/email-verification/confirm",
+            post(routes_email::confirm_verification),
+        )
+        .route(
+            "/auth/email-change",
+            post(routes_email::change_email_request),
+        )
+        .route(
+            "/auth/email-change/confirm",
+            post(routes_email::confirm_email_change),
+        )
+        .route(
+            "/auth/display-name",
+            patch(routes_email::change_display_name),
+        )
         .layer(from_fn_with_state(state.clone(), csrf));
     Router::new()
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
         .route("/register", get(pages::register))
         .route("/account", get(pages::account))
+        .route("/verify-email", get(pages::verify_email))
+        .route("/confirm-email-change", get(pages::confirm_email_change))
         .route("/forgot-password", get(pages::forgot_password))
         .route("/reset-password", get(pages::reset_password))
         .route("/spike/board", get(pages::board))

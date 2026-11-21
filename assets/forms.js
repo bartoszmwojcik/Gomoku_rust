@@ -35,7 +35,7 @@
     if (slot) slot.textContent = texts.sending ?? "";
     try {
       const response = await fetch(form.dataset.api, {
-        method: "POST",
+        method: form.dataset.method || "POST",
         headers: { "Content-Type": "application/json", "X-Gomoku-Request": "1" },
         body: JSON.stringify(body),
         credentials: "same-origin",
@@ -49,6 +49,7 @@
           const done = document.querySelector(form.dataset.success);
           if (done) done.hidden = false;
           if (form.hasAttribute("data-hide-on-success")) form.hidden = true;
+          if (form.hasAttribute("data-reload-on-success")) window.setTimeout(() => window.location.reload(), 800);
           return;
         }
         window.location.assign(form.dataset.redirect || "/");

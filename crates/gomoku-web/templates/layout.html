@@ -32,6 +32,19 @@
       <a href="{{ ctx.path }}?lang=fr" lang="fr" hreflang="fr">Français</a>
     </nav>
   </header>
+  {% if ctx.banner %}
+  <section class="banner" data-verify-banner data-user="{{ ctx.user_id }}" role="region" aria-label="{{ ctx.tr.t("banner.title") }}" data-testid="verify-banner">
+    <strong>{{ ctx.tr.t("banner.title") }}</strong>
+    <span>{{ ctx.tr.t("banner.text") }}</span>
+    <form data-api="/api/auth/email-verification/resend" data-success="#banner-sent" data-testid="banner-resend" novalidate>
+      <button type="submit" data-testid="banner-resend-button">{{ ctx.tr.t("banner.resend") }}</button>
+      <span data-form-error role="alert"></span>
+    </form>
+    <span id="banner-sent" hidden role="status" data-testid="banner-sent">{{ ctx.tr.t("banner.sent") }}</span>
+    <button type="button" data-banner-close data-testid="banner-close">{{ ctx.tr.t("banner.close") }}</button>
+  </section>
+  <script src="/assets/banner.js" defer></script>
+  {% endif %}
   <main>{% block content %}{% endblock %}</main>
   <script type="application/json" id="i18n-errors">{{ ctx.errors_json|safe }}</script>
   <script type="application/json" id="i18n-form" data-sending="{{ ctx.tr.t("form.sending") }}" data-network="{{ ctx.tr.t("form.networkError") }}" data-unexpected="{{ ctx.tr.t("form.unexpectedError") }}"></script>

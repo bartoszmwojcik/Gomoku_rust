@@ -13,6 +13,26 @@ pub struct ResetToken {
     pub id: Uuid,
 }
 
+/// Marks the user's unused password reset and e-mail change links as used: a password change or reset kills a
+/// stale link of either kind. Runs inside the caller's transaction.
+async fn invalidate_link_tokens(
+    tx: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    for sql in [
+        "UPDATE password_reset_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
+        "UPDATE email_change_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
+    ] {
+        sqlx::query(sql)
+            .bind(user_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
 impl Database {
     /// Replaces the hash only if it is still `previous_hash` (so of two parallel changes only the first wins),
     /// removes the user's other sessions (all but `current_session`) and invalidates their unused reset links, in
@@ -42,13 +62,7 @@ impl Database {
             .bind(current_session)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "UPDATE password_reset_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
-        )
-        .bind(user_id)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        invalidate_link_tokens(&mut tx, user_id, now).await?;
         tx.commit().await?;
         Ok(true)
     }
@@ -139,13 +153,7 @@ impl Database {
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "UPDATE password_reset_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
-        )
-        .bind(user_id)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        invalidate_link_tokens(&mut tx, user_id, now).await?;
         tx.commit().await?;
         Ok(Some(user_id))
     }

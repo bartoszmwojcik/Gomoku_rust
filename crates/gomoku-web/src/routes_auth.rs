@@ -9,13 +9,14 @@ use gomoku_core::auth::{
     FieldIssue, validate_display_name, validate_email, validate_login_password,
     validate_new_password,
 };
-use gomoku_core::validators::normalize_display_name;
+use gomoku_core::validators::{is_installation_admin, normalize_display_name};
 use gomoku_db::{NewSession, NewUser, RegisterError};
 use serde_json::{Value, json};
 
 use crate::api::{ApiError, ok, read_json, string_field};
 use crate::app::AppState;
 use crate::client_address::client_key;
+use crate::routes_email::issue_verification;
 use crate::security::{hash_opaque_token, new_opaque_token};
 use crate::session::{
     SESSION_TTL, current_user, expired_session_cookie, session_cookie, session_token,
@@ -77,6 +78,11 @@ pub async fn rate_limit(
 fn address_key(state: &AppState, headers: &HeaderMap, scope: &str) -> Result<String, ApiError> {
     client_key(headers, scope, &state.config)
         .map_err(|_| ApiError::internal_logged("client address", &"unavailable behind the proxy"))
+}
+
+fn email_taken() -> ApiError {
+    ApiError::conflict("CONFLICT", EMAIL_TAKEN_MESSAGE)
+        .with_data(json!({ "reason": "email_taken" }))
 }
 
 fn already_authenticated() -> ApiError {
@@ -143,6 +149,11 @@ pub async fn register(
 
     // Hashed before the insert on every path, so the response time does not depend on whether the e-mail exists.
     let password_hash = state.hasher.hash(&password).await.map_err(db_error)?;
+    // The administrator's account comes only from the admin CLI: the same answer as for a taken e-mail, after
+    // hashing and before any write, so neither the answer nor its time tells the two cases apart.
+    if is_installation_admin(&email, state.config.admin_email.as_deref()) {
+        return Err(email_taken());
+    }
     let token = new_opaque_token();
     let token_hash = hash_opaque_token(&token);
     let key_name = normalize_display_name(&display_name);
@@ -163,10 +174,7 @@ pub async fn register(
         .await;
     let id = match created {
         Ok(id) => id,
-        Err(RegisterError::EmailTaken) => {
-            return Err(ApiError::conflict("CONFLICT", EMAIL_TAKEN_MESSAGE)
-                .with_data(json!({ "reason": "email_taken" })));
-        }
+        Err(RegisterError::EmailTaken) => return Err(email_taken()),
         Err(RegisterError::DisplayNameTaken) => {
             return Err(ApiError::conflict("CONFLICT", DISPLAY_NAME_TAKEN_MESSAGE)
                 .with_field(
@@ -178,6 +186,12 @@ pub async fn register(
         }
         Err(RegisterError::Db(error)) => return Err(db_error(error)),
     };
+    // The confirmation link goes out after the registration committed. The call is awaited (bounded by the send
+    // timeout), but a failure never fails the registration: it is logged without the address or the token, and the
+    // player can ask for a new link later.
+    if let Err(error) = issue_verification(&state, id, &email, &display_name, None).await {
+        tracing::error!(error = ?error, "verification e-mail not sent");
+    }
     let jar = jar.add(session_cookie(state.config.session_cookie_secure, token));
     let user = json!({ "id": id, "displayName": display_name });
     Ok((jar, ok(StatusCode::CREATED, json!({ "user": user }))))

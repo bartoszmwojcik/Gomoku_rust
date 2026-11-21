@@ -297,6 +297,139 @@ pub fn build_reset_message(input: &ResetMessageInput<'_>) -> EmailMessage {
     }
 }
 
+/// How long a verification link is valid.
+pub const VERIFICATION_LINK_VALID_HOURS: i64 = 24;
+/// How long an e-mail change link is valid.
+pub const EMAIL_CHANGE_LINK_VALID_HOURS: i64 = 24;
+
+fn paragraphs(text: &[String], html: Vec<String>, to: &str, subject: &str) -> EmailMessage {
+    EmailMessage {
+        to: to.to_owned(),
+        subject: subject.to_owned(),
+        text: text.join("\n\n"),
+        html: html.join("\n"),
+    }
+}
+
+/// The link of a verification message; `next` (a safe path other than `/`) is carried through the confirmation.
+pub fn build_verification_link(origin: &str, token: &str, next: Option<&str>) -> String {
+    let mut link = format!(
+        "{}/verify-email?token={}",
+        origin.trim_end_matches('/'),
+        crate::session::encode_component(token)
+    );
+    let safe = gomoku_core::auth::safe_next_path(next);
+    if safe != "/" {
+        link.push_str("&next=");
+        link.push_str(&crate::session::encode_component(&safe));
+    }
+    link
+}
+
+/// The e-mail confirmation message (to the account's own address).
+pub fn build_verification_message(
+    to: &str,
+    name: &str,
+    token: &str,
+    origin: &str,
+    next: Option<&str>,
+) -> EmailMessage {
+    let link = build_verification_link(origin, token, next);
+    let greeting = format!("Cześć {name},");
+    let intro = "potwierdź swój adres e-mail w Gomoku.";
+    let reason = "Bez potwierdzonego adresu nie odzyskasz konta, jeśli zapomnisz hasła.";
+    let cta = "Potwierdź adres e-mail";
+    let validity = format!("Link jest ważny {VERIFICATION_LINK_VALID_HOURS} godziny.");
+    let ignore = "Jeśli to nie Ty zakładałeś konto w Gomoku, zignoruj tę wiadomość.";
+    let safe_link = escape_html(&link);
+    paragraphs(
+        &[
+            format!("{greeting} {intro}"),
+            reason.to_owned(),
+            format!("{cta}: {link}"),
+            validity.clone(),
+            ignore.to_owned(),
+        ],
+        vec![
+            format!("<p>{} {intro}</p>", escape_html(&greeting)),
+            format!("<p>{reason}</p>"),
+            format!("<p><a href=\"{safe_link}\">{cta}</a></p>"),
+            format!("<p>Jeśli przycisk nie działa, skopiuj adres do przeglądarki: {safe_link}</p>"),
+            format!("<p>{validity}</p>"),
+            format!("<p>{ignore}</p>"),
+        ],
+        to,
+        "Potwierdź adres e-mail w Gomoku",
+    )
+}
+
+pub fn build_email_change_link(origin: &str, token: &str) -> String {
+    format!(
+        "{}/confirm-email-change?token={}",
+        origin.trim_end_matches('/'),
+        crate::session::encode_component(token)
+    )
+}
+
+/// The message with the confirmation link of a new address; it goes to the NEW address.
+pub fn build_email_change_message(to: &str, name: &str, token: &str, origin: &str) -> EmailMessage {
+    let link = build_email_change_link(origin, token);
+    let greeting = format!("Cześć {name},");
+    let intro = "ten adres został podany jako nowy adres e-mail Twojego konta w Gomoku.";
+    let cta = "Potwierdź nowy adres";
+    let validity = format!(
+        "Link jest ważny {EMAIL_CHANGE_LINK_VALID_HOURS} godziny i działa tylko raz. Do jego użycia konto korzysta z dotychczasowego adresu."
+    );
+    let ignore = "Jeśli to nie Ty, zignoruj tę wiadomość - adres konta się nie zmieni.";
+    let safe_link = escape_html(&link);
+    paragraphs(
+        &[
+            format!("{greeting} {intro}"),
+            format!("{cta}: {link}"),
+            validity.clone(),
+            ignore.to_owned(),
+        ],
+        vec![
+            format!("<p>{} {intro}</p>", escape_html(&greeting)),
+            format!("<p><a href=\"{safe_link}\">{cta}</a></p>"),
+            format!("<p>Jeśli przycisk nie działa, skopiuj adres do przeglądarki: {safe_link}</p>"),
+            format!("<p>{validity}</p>"),
+            format!("<p>{ignore}</p>"),
+        ],
+        to,
+        "Potwierdź nowy adres e-mail w Gomoku",
+    )
+}
+
+/// `ala.kowalska@example.com` -> `a***@example.com`: enough to recognise it, not to reuse it.
+pub fn mask_email(address: &str) -> String {
+    match address.rfind('@') {
+        Some(at) if at >= 1 => {
+            let first: String = address.chars().take(1).collect();
+            format!("{first}***{}", &address[at..])
+        }
+        _ => "***".to_owned(),
+    }
+}
+
+/// The notice that goes to the previous address after a change.
+pub fn build_email_changed_notice(to: &str, name: &str, new_email_masked: &str) -> EmailMessage {
+    let greeting = format!("Cześć {name},");
+    let intro = format!(
+        "adres e-mail Twojego konta w Gomoku zmieniono na {new_email_masked}. Od teraz tam trafiają wiadomości z konta."
+    );
+    let action = "Jeśli to nie Ty, ktoś zna Twoje hasło albo ma dostęp do Twojej sesji: skontaktuj się z administratorem serwisu.";
+    paragraphs(
+        &[format!("{greeting} {intro}"), action.to_owned()],
+        vec![
+            format!("<p>{} {}</p>", escape_html(&greeting), escape_html(&intro)),
+            format!("<p>{}</p>", escape_html(action)),
+        ],
+        to,
+        "Adres e-mail Twojego konta w Gomoku został zmieniony",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -533,6 +666,54 @@ mod tests {
         ] {
             assert!(!is_email_address(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_verification_message_carries_a_safe_next_path_only() {
+        let message = build_verification_message(
+            "a@b.pl",
+            "<Ala>",
+            "tok en",
+            "https://x.pl/",
+            Some("/lobby?x=1"),
+        );
+        let link = "https://x.pl/verify-email?token=tok%20en&next=%2Flobby%3Fx%3D1";
+        assert!(message.text.contains(link) && message.html.contains("&amp;next="));
+        assert!(message.text.contains("ważny 24 godziny") && message.html.contains("&lt;Ala&gt;"));
+        assert_eq!(message.subject, "Potwierdź adres e-mail w Gomoku");
+        for next in [
+            None,
+            Some("/"),
+            Some("https://evil.example"),
+            Some("//evil.example"),
+        ] {
+            assert_eq!(
+                build_verification_link("https://x.pl", "t", next),
+                "https://x.pl/verify-email?token=t",
+                "{next:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_email_change_message_goes_with_the_link_and_the_notice_masks_the_new_address() {
+        let message = build_email_change_message("new@x.pl", "Ala", "a/b", "http://localhost:3000");
+        assert_eq!(message.to, "new@x.pl");
+        assert!(
+            message
+                .text
+                .contains("http://localhost:3000/confirm-email-change?token=a%2Fb")
+        );
+        assert!(
+            message.html.contains("Potwierdź nowy adres") && message.subject.contains("nowy adres")
+        );
+        let notice =
+            build_email_changed_notice("old@x.pl", "Ala", &mask_email("ala.kowalska@example.com"));
+        assert_eq!(notice.to, "old@x.pl");
+        assert!(notice.text.contains("a***@example.com") && !notice.text.contains("kowalska"));
+        assert_eq!(mask_email("żaneta@x.pl"), "ż***@x.pl");
+        assert_eq!(mask_email("@x.pl"), "***");
+        assert_eq!(mask_email("no-at-sign"), "***");
     }
 
     #[test]
