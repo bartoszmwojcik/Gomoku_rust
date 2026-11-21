@@ -151,3 +151,15 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Nie zrobione w F0: `om-setup-agent-pipeline` (po zielonym CI na PR), `cargo audit` (osobny job informacyjny), Tailwind CLI
   (na razie ręczny `assets/app.css` z tokenami; decyzja przy pierwszym prawdziwym ekranie w F2).
 - Do usunięcia przy F2/F3: strony `/spike/*` (tymczasowe).
+
+### F1 (2026-11-21) — w PR `feat/f1-domain-core`
+
+- Zrobione w `gomoku-core`: typy (`Seat`, `Color`, `EndReason`, …), reguły i `check_win`, plansza (bitboard 225 bitów, kodek dziennika ruchów),
+  `apply_move`, zegar, poddanie, rewanż, kody zaproszeń (generowanie, normalizacja, wyciąganie z linku), nick gościa, kursor historii,
+  krok przeglądu partii, stałe limitów i lobby, powiadomienie o powrocie, normalizacja e-maila i nazwy (`validators`).
+- Testy: 83 jednostkowe (przypadki przeniesione z `packages/core/src/games/*.test.ts`), testy własnościowe `proptest` i 2000 partii
+  seedowanych (`tests/win_equivalence.rs`), **parytet z Node** na plikach golden (`tests/golden/node.json`: 300 partii, 23 nicki, 11 kodów;
+  generator `tests/golden/generate.ts` uruchamiany w starym repo). Pokrycie `gomoku-core`: 100% linii i funkcji.
+- Odstępstwa od portu 1:1 (świadome): czas jako `i64` epoch ms zamiast `Date`; brak kodeka bitboard↔tekst `bit(225)` (nowy schemat,
+  decyzja 2 — format zapisu zdecyduje F3); komunikaty błędów PL zostają w katalogu i18n (core zwraca kody błędów).
+- Przeniesione do późniejszych faz (zależą od schematu, bota lub MCP): `board-view`, `finished-stats` (F8), `agent-*` (F7), `paper/*` (F5), `bot/*` (F6).
