@@ -1,0 +1,6 @@
+target
+.git
+.claude
+.ai
+.env
+.env.*

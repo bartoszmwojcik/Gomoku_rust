@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Gomoku{% endblock %}</title>
+  <link rel="stylesheet" href="/assets/game-tokens.css">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/htmx.min.js" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

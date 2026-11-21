@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+{% block title %}Logowanie · Gomoku{% endblock %}
+{% block content %}
+<h1>Logowanie</h1>
+<form method="post" action="/api/auth/login" data-testid="login-form">
+  <label>E-mail <input type="email" name="email" required autocomplete="email"></label>
+  <label>Hasło <input type="password" name="password" required autocomplete="current-password"></label>
+  <button type="submit">Zaloguj się</button>
+</form>
+{% endblock %}

@@ -136,3 +136,18 @@ Deploy robimy **na końcu epiku/całości** (reguła właściciela: nie per PR),
 ## 8. Następny krok po zatwierdzeniu
 
 F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, spike frontendu (decyzja 1), na końcu `om-setup-agent-pipeline` (decyzja 6).
+
+## 9. Stan realizacji
+
+### F0 (2026-11-21) — gotowe do przeglądu w PR `feat/f0-foundation`
+
+- Zrobione: toolchain (`rustup`), workspace (`gomoku-core`, `gomoku-db`, `gomoku-web`), konfiguracja przez `from_lookup`,
+  `/api/health` (200/503, szczegół błędu tylko w logu, `acquire_timeout` 3 s), SQLx + pierwsza migracja (`app_meta`),
+  testy na PostgreSQL w Testcontainers, `scripts/coverage.sh` (progi z decyzji 4), `Dockerfile` (obraz 98 MB, healthcheck),
+  `compose.yaml`, CI (`lint`, `test`+pokrycie, `docker`), `AGENTS.md`.
+- **Spike frontendu (decyzja 1) potwierdzony:** `/login` i `/spike/board` (Askama + htmx) działają w prawdziwej przeglądarce
+  (`agent-browser`): plansza 15×15, stawianie kamieni, zegar odświeżany przez htmx co 1 s z czasu serwera. Decyzja A4 zostaje.
+- Wynik pokrycia: core 100%, db ≈ 86%, web ≈ 94% (linie).
+- Nie zrobione w F0: `om-setup-agent-pipeline` (po zielonym CI na PR), `cargo audit` (osobny job informacyjny), Tailwind CLI
+  (na razie ręczny `assets/app.css` z tokenami; decyzja przy pierwszym prawdziwym ekranie w F2).
+- Do usunięcia przy F2/F3: strony `/spike/*` (tymczasowe).
