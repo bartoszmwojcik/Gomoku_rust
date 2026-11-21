@@ -1,5 +1,10 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>Gomoku</h1>
-<p><a href="/login">Zaloguj się</a> · <a href="/spike/board">Plansza (spike)</a></p>
+<h1>{{ ctx.tr.t("home.title") }}</h1>
+<p>{{ ctx.tr.t("home.lead") }}</p>
+{% match signed_in_as %}
+{% when Some with (text) %}<p data-testid="signed-in-as">{{ text }}</p>
+{% when None %}<p>{{ ctx.tr.t("home.guest") }}</p>
+{% endmatch %}
+<p><a href="/spike/board">{{ ctx.tr.t("home.board") }}</a></p>
 {% endblock %}

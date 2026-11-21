@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("register.title") }} · {{ ctx.tr.t("app.name") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("register.title") }}</h1>
+<form data-api="/api/auth/register" data-redirect="{{ next }}" data-testid="register-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label>{{ ctx.tr.t("register.email") }}
+    <input type="email" name="email" required autocomplete="email" data-testid="email">
+  </label>
+  <p data-error-for="email" role="alert"></p>
+  <label>{{ ctx.tr.t("register.displayName") }}
+    <input type="text" name="displayName" required autocomplete="nickname" minlength="3" maxlength="24" data-testid="display-name">
+  </label>
+  <small>{{ ctx.tr.t("register.displayNameHint") }}</small>
+  <p data-error-for="displayName" role="alert"></p>
+  <label>{{ ctx.tr.t("register.password") }}
+    <input type="password" name="password" required autocomplete="new-password" minlength="8" data-testid="password">
+  </label>
+  <small>{{ ctx.tr.t("register.passwordHint") }}</small>
+  <p data-error-for="password" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("register.submit") }}</button>
+</form>
+<p>{{ ctx.tr.t("register.haveAccount") }} <a href="/login?next={{ next|urlencode }}">{{ ctx.tr.t("register.loginLink") }}</a></p>
+{% endblock %}

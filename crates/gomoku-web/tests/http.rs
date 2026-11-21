@@ -1,111 +1,135 @@
-//! In-process HTTP tests: the real router, fake collaborators (no network, no database).
+//! In-process HTTP tests without a database: health, static pages, language switch.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
+mod common;
 
-use async_trait::async_trait;
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use gomoku_web::app::{AppState, build_router};
-use gomoku_web::health::HealthProbe;
-use http_body_util::BodyExt;
-use tower::ServiceExt;
-
-struct FakeProbe(Result<(), String>);
-
-#[async_trait]
-impl HealthProbe for FakeProbe {
-    async fn check(&self) -> Result<(), String> {
-        self.0.clone()
-    }
-}
-
-fn router(probe: Result<(), String>, now: u64) -> Router {
-    let state = AppState {
-        health: Arc::new(FakeProbe(probe)),
-        now: Arc::new(move || now),
-    };
-    build_router(state, std::path::Path::new("../../assets"))
-}
-
-async fn get(router: Router, uri: &str) -> (StatusCode, String) {
-    let response = router
-        .oneshot(Request::get(uri).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
-}
+use axum::http::StatusCode;
+use common::TestApp;
 
 #[tokio::test]
-async fn health_is_ok_when_database_answers() {
-    let (status, body) = get(router(Ok(()), 0), "/api/health").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, r#"{"data":{"database":"up"},"ok":true}"#);
+async fn health_is_ok_when_the_probe_answers() {
+    let app = TestApp::without_database(Ok(()));
+    let reply = app.client().get("/api/health").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body, r#"{"data":{"database":"up"},"ok":true}"#);
 }
 
 #[tokio::test]
 async fn health_is_503_and_hides_the_error_detail() {
-    let (status, body) = get(router(Err("secret dsn".into()), 0), "/api/health").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(body.contains("DATABASE_UNAVAILABLE"));
-    assert!(!body.contains("secret dsn"));
+    let app = TestApp::without_database(Err("secret dsn".into()));
+    let reply = app.client().get("/api/health").await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(reply.body.contains("DATABASE_UNAVAILABLE"));
+    assert!(!reply.body.contains("secret dsn"));
 }
 
 #[tokio::test]
-async fn home_and_login_pages_render() {
-    let (status, body) = get(router(Ok(()), 0), "/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<h1>Gomoku</h1>"));
-
-    let (status, body) = get(router(Ok(()), 0), "/login").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(r#"data-testid="login-form""#));
-}
-
-#[tokio::test]
-async fn board_page_has_225_cells() {
-    let (status, body) = get(router(Ok(()), 0), "/spike/board").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.matches(r#"class="cell""#).count(), 15 * 15);
-    assert!(body.contains(r#"hx-get="/spike/clock""#));
-}
-
-#[tokio::test]
-async fn clock_counts_down_from_the_server_time() {
-    let (_, body) = get(router(Ok(()), 0), "/spike/clock").await;
-    assert_eq!(body.trim(), "10:00");
-    let (_, body) = get(router(Ok(()), 541), "/spike/clock").await;
-    assert_eq!(body.trim(), "0:59");
-    let (_, body) = get(router(Ok(()), 590), "/spike/clock").await;
-    assert_eq!(body.trim(), "0:10");
-    let (_, body) = get(router(Ok(()), 595), "/spike/clock").await;
-    assert_eq!(body.trim(), "0:05");
+async fn board_page_has_225_cells_and_the_clock_counts_down_from_server_time() {
+    let app = TestApp::without_database(Ok(()));
+    let reply = app.client().get("/spike/board").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body.matches(r#"class="cell""#).count(), 15 * 15);
+    assert!(reply.body.contains(r#"hx-get="/spike/clock""#));
+    // 1_800_000_000 is divisible by 600: the clock starts full.
+    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "10:00");
+    app.advance_seconds(541);
+    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:59");
+    app.advance_seconds(49);
+    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:10");
+    app.advance_seconds(5);
+    assert_eq!(app.client().get("/spike/clock").await.body.trim(), "0:05");
 }
 
 #[tokio::test]
 async fn serves_static_assets_and_404s_unknown_paths() {
-    let (status, body) = get(router(Ok(()), 0), "/assets/board.js").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("black"));
+    let app = TestApp::without_database(Ok(()));
+    let reply = app.client().get("/assets/forms.js").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert!(reply.body.contains("data-api"));
+    assert_eq!(
+        app.client().get("/nope").await.status,
+        StatusCode::NOT_FOUND
+    );
+}
 
-    let (status, _) = get(router(Ok(()), 0), "/nope").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+#[tokio::test]
+async fn home_renders_in_polish_by_default_and_follows_accept_language() {
+    let app = TestApp::without_database(Ok(()));
+    let pl = app.client().get("/").await;
+    assert!(pl.body.contains(r#"<html lang="pl">"#));
+    assert!(pl.body.contains("Załóż konto"));
+    let fr = app
+        .client()
+        .with_header("accept-language", "fr-CA,fr;q=0.9,en;q=0.5")
+        .get("/")
+        .await;
+    assert!(fr.body.contains(r#"<html lang="fr">"#));
+    assert!(fr.body.contains("Créer un compte"));
+    let de = app
+        .client()
+        .with_header("accept-language", "de")
+        .get("/")
+        .await;
+    // German has no catalog yet: the chain falls back to English.
+    assert!(de.body.contains(r#"<html lang="de">"#));
+    assert!(de.body.contains("Sign up"));
+}
+
+#[tokio::test]
+async fn the_lang_parameter_sets_a_cookie_and_is_removed_from_the_address() {
+    let app = TestApp::without_database(Ok(()));
+    let mut client = app.client();
+    let reply = client.get("/login?next=%2Faccount&lang=en").await;
+    assert_eq!(reply.status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(reply.header("location"), Some("/login?next=%2Faccount"));
+    let cookie = reply.set_cookies().join(";");
+    assert!(
+        cookie.contains("gomoku_lang=en")
+            && cookie.contains("HttpOnly")
+            && cookie.contains("SameSite=Lax")
+    );
+    assert!(cookie.contains("Max-Age=31536000"));
+    // The cookie now decides, whatever the browser asks for.
+    let page = client.with_header("accept-language", "fr").get("/").await;
+    assert!(page.body.contains(r#"<html lang="en">"#));
+}
+
+#[tokio::test]
+async fn an_unsupported_lang_is_only_dropped_and_api_and_assets_are_left_alone() {
+    let app = TestApp::without_database(Ok(()));
+    let reply = app.client().get("/?lang=xx").await;
+    assert_eq!(reply.status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(reply.header("location"), Some("/"));
+    assert!(reply.set_cookies().is_empty());
+    assert_eq!(
+        app.client().get("/api/health?lang=fr").await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.client().get("/assets/board.js?lang=fr").await.status,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
 async fn serve_runs_until_shutdown() {
+    let app = TestApp::without_database(Ok(()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(gomoku_web::server::serve(
         listener,
-        router(Ok(()), 0),
+        app.router.clone(),
         async {
             let _ = stopped.await;
         },
     ));
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+#[test]
+fn the_system_clock_tells_the_current_time() {
+    let before = gomoku_db::OffsetDateTime::now_utc();
+    let now = (gomoku_web::clock::system_clock())();
+    assert!(now >= before && now - before < time::Duration::seconds(5));
 }

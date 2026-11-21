@@ -3,7 +3,7 @@ FROM rust:1.100-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml ./
 COPY crates crates
-RUN cargo build --release --locked -p gomoku-web
+RUN cargo build --release --locked -p gomoku-web -p gomoku-db
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -11,7 +11,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 gomoku
 WORKDIR /app
-COPY --from=build /src/target/release/gomoku-web /app/gomoku-web
+COPY --from=build /src/target/release/gomoku-web /src/target/release/gomoku-db /app/
 COPY assets /app/assets
 ENV BIND_ADDR=0.0.0.0:3000 ASSETS_DIR=/app/assets
 USER gomoku

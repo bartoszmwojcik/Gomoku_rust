@@ -163,3 +163,17 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Odstępstwa od portu 1:1 (świadome): czas jako `i64` epoch ms zamiast `Date`; brak kodeka bitboard↔tekst `bit(225)` (nowy schemat,
   decyzja 2 — format zapisu zdecyduje F3); komunikaty błędów PL zostają w katalogu i18n (core zwraca kody błędów).
 - Przeniesione do późniejszych faz (zależą od schematu, bota lub MCP): `board-view`, `finished-stats` (F8), `agent-*` (F7), `paper/*` (F5), `bot/*` (F6).
+
+### F2a (2026-11-21) — w PR `feat/f2a-accounts`
+
+- Zrobione: nowy schemat `users`/`sessions`/`rate_limit_buckets` (migracja 0002), rejestracja, logowanie, wylogowanie, sesje (cookie `httpOnly`,
+  w produkcji `__Host-`, w bazie tylko SHA-256 tokenu), argon2id z atrapowym hashem przeciw wyliczaniu kont, CSRF (`Origin` + `X-Gomoku-Request`),
+  limity prób (SQL, okno stałe), adres klienta za proxy (IPv6 /64), koperta API `{ok,data|error}` z kodami `fieldIssues`, limit ciała 64 KB,
+  strony `/register`, `/login`, `/account` i nawigacja; fundament i18n (PL/EN/FR, `?lang=` → ciasteczko, łańcuch zapasowy, test parzystości kluczy),
+  CLI `gomoku-db migrate`.
+- Świadome odstępstwa: w produkcji brak `APP_ORIGIN` lub `TRUST_PROXY_HOPS` przerywa start procesu (w Node trasy odpowiadały 500, health działał);
+  hasła argon2id (bez hashy do przeniesienia); wyjątek „sesja wygasła, ale partia trwa” (G5) dojdzie z grami w F3.
+- Do F2b–F2d: zmiana i reset hasła, potwierdzenie e-maila i e-mail (plik/Brevo), zmiana nazwy i e-maila, usunięcie konta, sprzątanie wygasłych rekordów,
+  administrator z `ADMIN_EMAIL`.
+- Nie zrobione: automatyczne scenariusze przeglądarkowe w `tests/integration` (harness `agent-browser`); ścieżkę sprawdziłem ręcznie w przeglądarce
+  (rejestracja z błędem pola, rejestracja, wylogowanie, logowanie ze złym i dobrym hasłem, przełączenie na FR).

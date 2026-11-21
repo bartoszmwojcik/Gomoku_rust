@@ -3,10 +3,12 @@
 //! Ported from the Node.js reference (`packages/core/src/games`); the tests carry over its cases.
 
 pub mod apply_move;
+pub mod auth;
 pub mod board;
 pub mod clock;
 pub mod constants;
 pub mod history;
+pub mod i18n;
 pub mod invitation_code;
 pub mod lobby;
 pub mod nickname;
