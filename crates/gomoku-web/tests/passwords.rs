@@ -59,7 +59,7 @@ async fn request_reset(app: &TestApp, email: &str) -> Reply {
 
 /// The token in the link of the newest message.
 fn latest_token(app: &TestApp) -> String {
-    let messages = app.messages();
+    let messages = resets(app);
     let text = &messages.last().expect("a message was sent").text;
     let start = text.find("/reset-password?token=").unwrap() + "/reset-password?token=".len();
     text[start..]
@@ -85,6 +85,14 @@ async fn login(app: &TestApp, email: &str, password: &str) -> Reply {
             json!({ "email": email, "password": password }),
         )
         .await
+}
+
+/// The reset messages only (registration also sends a confirmation message).
+fn resets(app: &TestApp) -> Vec<gomoku_web::email::EmailMessage> {
+    app.messages()
+        .into_iter()
+        .filter(|m| m.subject == "Reset hasła w Gomoku")
+        .collect()
 }
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
@@ -264,7 +272,7 @@ async fn a_reset_request_always_answers_the_same_and_mails_only_confirmed_owners
     );
     assert_eq!(answers[0], r#"{"data":null,"ok":true}"#);
 
-    let messages = app.messages();
+    let messages = resets(&app);
     assert_eq!(messages.len(), 1, "only the confirmed owner got a message");
     let message = &messages[0];
     assert_eq!(message.to, "confirmed@example.com");
@@ -333,7 +341,7 @@ async fn at_most_three_messages_per_hour_per_address_and_the_daily_pool_is_share
         );
     }
     assert_eq!(
-        app.messages().len(),
+        resets(&app).len(),
         3,
         "the fourth and fifth request send nothing"
     );
@@ -355,7 +363,7 @@ async fn the_daily_pool_stops_sending_for_everyone() {
         confirm_email(&app, &email).await;
         assert_eq!(request_reset(&app, &email).await.status, StatusCode::OK);
     }
-    assert_eq!(app.messages().len(), 2);
+    assert_eq!(resets(&app).len(), 2);
 }
 
 #[tokio::test]

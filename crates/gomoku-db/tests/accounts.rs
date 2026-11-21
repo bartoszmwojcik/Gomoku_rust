@@ -417,3 +417,294 @@ async fn a_newer_reset_link_invalidates_older_ones_only() {
         1
     );
 }
+
+fn hash(n: &str) -> String {
+    format!("{:0>64}", n)
+}
+
+#[tokio::test]
+async fn verification_links_confirm_the_address_once() {
+    let (db, _container) = database().await;
+    let id = register(&db, "ala@example.com", "Ala", "ala")
+        .await
+        .unwrap();
+    let now = OffsetDateTime::now_utc();
+    let later = now + time::Duration::hours(24);
+    let old = db
+        .insert_verification_token(id, &hash("old"), now - time::Duration::minutes(5), later)
+        .await
+        .unwrap();
+    let new = db
+        .insert_verification_token(id, &hash("new"), now, later)
+        .await
+        .unwrap();
+    db.insert_verification_token(
+        id,
+        &hash("expired"),
+        now - time::Duration::hours(30),
+        now - time::Duration::hours(6),
+    )
+    .await
+    .unwrap();
+    db.invalidate_older_verification_tokens(id, now, new, now)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.confirm_email_verification(&hash("old"), now)
+            .await
+            .unwrap(),
+        None,
+        "older link was invalidated"
+    );
+    assert_eq!(
+        db.confirm_email_verification(&hash("expired"), now)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.confirm_email_verification(&hash("nope"), now)
+            .await
+            .unwrap(),
+        None
+    );
+
+    assert_eq!(
+        db.confirm_email_verification(&hash("new"), now)
+            .await
+            .unwrap(),
+        Some(id)
+    );
+    let first = db
+        .find_user_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .email_verified_at
+        .unwrap();
+    assert_eq!(
+        db.confirm_email_verification(&hash("new"), now)
+            .await
+            .unwrap(),
+        None,
+        "one use only"
+    );
+
+    // An already confirmed account keeps its original time; the second link is still consumed.
+    let again = db
+        .insert_verification_token(id, &hash("again"), now, later)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.confirm_email_verification(&hash("again"), now + time::Duration::hours(1))
+            .await
+            .unwrap(),
+        Some(id)
+    );
+    assert_eq!(
+        db.find_user_by_id(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .email_verified_at
+            .unwrap(),
+        first
+    );
+    db.delete_verification_token(again).await.unwrap();
+    db.delete_verification_token(old).await.unwrap();
+    assert_eq!(
+        count(&db, "SELECT count(*) FROM email_verification_tokens").await,
+        2
+    );
+    assert!(db.email_is_taken("ala@example.com").await.unwrap());
+    assert!(!db.email_is_taken("free@example.com").await.unwrap());
+}
+
+#[tokio::test]
+async fn an_email_change_swaps_the_address_ends_sessions_and_kills_other_links() {
+    let (db, _container) = database().await;
+    let id = verified_user(&db, "ala@example.com", "Ala", "ala").await;
+    let now = OffsetDateTime::now_utc();
+    let later = now + time::Duration::hours(24);
+    db.insert_email_change_token(id, "new@example.com", &hash("change"), now, later)
+        .await
+        .unwrap();
+    db.insert_reset_token(id, &hash("reset"), now, later)
+        .await
+        .unwrap();
+    db.insert_verification_token(id, &hash("verify"), now, later)
+        .await
+        .unwrap();
+    let other = db
+        .insert_email_change_token(id, "other@example.com", &hash("other"), now, later)
+        .await
+        .unwrap();
+
+    let changed = db
+        .apply_email_change(&hash("change"), now, |_, _| false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            changed.old_email.as_str(),
+            changed.new_email.as_str(),
+            changed.display_name.as_str(),
+            changed.was_verified
+        ),
+        ("ala@example.com", "new@example.com", "Ala", true)
+    );
+    let user = db.find_user_by_id(id).await.unwrap().unwrap();
+    assert_eq!(user.email, "new@example.com");
+    assert!(user.email_verified_at.is_some());
+    assert_eq!(count(&db, "SELECT count(*) FROM sessions").await, 0);
+    assert_eq!(
+        count(
+            &db,
+            "SELECT count(*) FROM password_reset_tokens WHERE used_at IS NULL"
+        )
+        .await
+            + count(
+                &db,
+                "SELECT count(*) FROM email_verification_tokens WHERE used_at IS NULL"
+            )
+            .await
+            + count(
+                &db,
+                "SELECT count(*) FROM email_change_tokens WHERE used_at IS NULL"
+            )
+            .await,
+        0
+    );
+    assert_eq!(
+        db.apply_email_change(&hash("change"), now, |_, _| false)
+            .await
+            .unwrap(),
+        None,
+        "one use only"
+    );
+    db.delete_email_change_token(other).await.unwrap();
+}
+
+#[tokio::test]
+async fn an_email_change_is_refused_for_expired_blocked_and_taken_addresses_and_writes_nothing() {
+    let (db, _container) = database().await;
+    let ala = verified_user(&db, "ala@example.com", "Ala", "ala").await;
+    register(&db, "bob@example.com", "Bob", "bob")
+        .await
+        .unwrap();
+    let now = OffsetDateTime::now_utc();
+    let later = now + time::Duration::hours(24);
+    db.insert_email_change_token(
+        ala,
+        "x@example.com",
+        &hash("expired"),
+        now - time::Duration::hours(30),
+        now - time::Duration::hours(6),
+    )
+    .await
+    .unwrap();
+    db.insert_email_change_token(ala, "blocked@example.com", &hash("blocked"), now, later)
+        .await
+        .unwrap();
+    db.insert_email_change_token(ala, "bob@example.com", &hash("taken"), now, later)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.apply_email_change(&hash("nope"), now, |_, _| false)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.apply_email_change(&hash("expired"), now, |_, _| false)
+            .await
+            .unwrap(),
+        None
+    );
+    let blocked = db
+        .apply_email_change(&hash("blocked"), now, |_, new| new == "blocked@example.com")
+        .await
+        .unwrap();
+    assert_eq!(blocked, None);
+    assert_eq!(
+        db.apply_email_change(&hash("taken"), now, |_, _| false)
+            .await
+            .unwrap(),
+        None
+    );
+
+    assert_eq!(
+        db.find_user_by_id(ala).await.unwrap().unwrap().email,
+        "ala@example.com"
+    );
+    assert_eq!(
+        count(&db, "SELECT count(*) FROM sessions").await,
+        2,
+        "sessions untouched"
+    );
+    // A refused change rolls back: the blocked token stays unused (it just expires).
+    assert_eq!(count(&db, &format!("SELECT count(*) FROM email_change_tokens WHERE token_hash = '{}' AND used_at IS NULL", hash("blocked"))).await, 1);
+}
+
+#[tokio::test]
+async fn renaming_is_limited_to_once_a_window_and_names_are_unique() {
+    let (db, _container) = database().await;
+    let ala = register(&db, "ala@example.com", "Ala", "ala")
+        .await
+        .unwrap();
+    register(&db, "bob@example.com", "Bob", "bob")
+        .await
+        .unwrap();
+    let now = OffsetDateTime::now_utc();
+    let cutoff = now - time::Duration::hours(24);
+
+    assert_eq!(
+        db.rename_user(ala, "Alicja", "alicja", now, cutoff)
+            .await
+            .unwrap(),
+        gomoku_db::RenameOutcome::Renamed
+    );
+    let user = db.find_user_by_id(ala).await.unwrap().unwrap();
+    assert_eq!(user.display_name, "Alicja");
+    assert!(user.display_name_changed_at.is_some());
+    // Inside the window nothing changes and the time of the last change is reported.
+    let again = db
+        .rename_user(
+            ala,
+            "Ola",
+            "ola",
+            now + time::Duration::hours(1),
+            now - time::Duration::hours(23),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(again, gomoku_db::RenameOutcome::Cooldown { .. }));
+    assert_eq!(
+        db.find_user_by_id(ala).await.unwrap().unwrap().display_name,
+        "Alicja"
+    );
+    // After the window it works, but a taken name is a conflict and spends nothing.
+    let later = now + time::Duration::hours(25);
+    assert_eq!(
+        db.rename_user(ala, "BOB", "bob", later, later - time::Duration::hours(24))
+            .await
+            .unwrap(),
+        gomoku_db::RenameOutcome::Taken
+    );
+    assert_eq!(
+        db.rename_user(ala, "Ola", "ola", later, later - time::Duration::hours(24))
+            .await
+            .unwrap(),
+        gomoku_db::RenameOutcome::Renamed
+    );
+    // An unknown user falls into the cooldown branch with the given time.
+    let ghost = db
+        .rename_user(gomoku_db::Uuid::nil(), "Ghost", "ghost", now, cutoff)
+        .await
+        .unwrap();
+    assert!(
+        matches!(ghost, gomoku_db::RenameOutcome::Cooldown { changed_at } if changed_at == now)
+    );
+}

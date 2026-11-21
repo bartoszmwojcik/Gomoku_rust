@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("emailChange.title") }} · {{ ctx.tr.t("app.name") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("emailChange.title") }}</h1>
+<p>{{ ctx.tr.t("emailChange.lead") }}</p>
+<form data-api="/api/auth/email-change/confirm" data-success="#change-done" data-hide-on-success data-testid="change-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <input type="hidden" name="token" value="{{ token }}">
+  <p data-error-for="token" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("emailChange.submit") }}</button>
+</form>
+<p id="change-done" hidden role="status" data-testid="change-done">{{ ctx.tr.t("emailChange.done") }} <a href="/login">{{ ctx.tr.t("nav.login") }}</a></p>
+{% endblock %}

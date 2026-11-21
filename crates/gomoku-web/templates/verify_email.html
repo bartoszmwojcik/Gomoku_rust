@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("verify.title") }} · {{ ctx.tr.t("app.name") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("verify.title") }}</h1>
+<p>{{ ctx.tr.t("verify.lead") }}</p>
+<form data-api="/api/auth/email-verification/confirm" data-redirect="{{ next }}" data-testid="verify-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <input type="hidden" name="token" value="{{ token }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <p data-error-for="token" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("verify.submit") }}</button>
+</form>
+{% if can_resend %}
+<h2>{{ ctx.tr.t("verify.newLink") }}</h2>
+<form data-api="/api/auth/email-verification/resend" data-success="#verify-resent" data-testid="verify-resend" novalidate>
+  <p data-form-error role="alert"></p>
+  <button type="submit" data-testid="verify-resend-button">{{ ctx.tr.t("banner.resend") }}</button>
+</form>
+<p id="verify-resent" hidden role="status" data-testid="verify-resent">{{ ctx.tr.t("banner.sent") }}</p>
+{% else %}
+{% if ctx.user.is_none() %}<p><a href="/login?next=%2Faccount" data-testid="verify-login">{{ ctx.tr.t("verify.loginForLink") }}</a></p>{% endif %}
+{% endif %}
+{% endblock %}

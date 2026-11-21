@@ -9,6 +9,41 @@
   <dd><span data-testid="account-email">{{ email }}</span>
     <span data-testid="account-verified">{% if verified %}{{ ctx.tr.t("account.verified") }}{% else %}{{ ctx.tr.t("account.unverified") }}{% endif %}</span></dd>
 </dl>
+
+<h2>{{ ctx.tr.t("account.name.title") }}</h2>
+{% match name_cooldown %}
+{% when Some with (time) %}<p data-testid="name-cooldown">{{ ctx.tr.t("account.name.cooldown") }} {{ time }}</p>
+{% when None %}{% endmatch %}
+<form data-api="/api/auth/display-name" data-method="PATCH" data-success="#name-changed" data-reload-on-success data-testid="name-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label>{{ ctx.tr.t("register.displayName") }}
+    <input type="text" name="displayName" required minlength="3" maxlength="24" value="{{ display_name }}" data-testid="new-display-name">
+  </label>
+  <small>{{ ctx.tr.t("register.displayNameHint") }}</small>
+  <p data-error-for="displayName" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("account.name.submit") }}</button>
+</form>
+<p id="name-changed" hidden role="status" data-testid="name-changed">{{ ctx.tr.t("account.name.done") }}</p>
+
+<h2>{{ ctx.tr.t("account.email.title") }}</h2>
+{% if email_locked %}
+<p data-testid="email-locked">{{ ctx.tr.t("account.email.locked") }}</p>
+{% else %}
+<form data-api="/api/auth/email-change" data-success="#email-requested" data-testid="email-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label>{{ ctx.tr.t("account.email.new") }}
+    <input type="email" name="newEmail" required autocomplete="email" data-testid="new-email">
+  </label>
+  <p data-error-for="newEmail" role="alert"></p>
+  <label>{{ ctx.tr.t("account.password.current") }}
+    <input type="password" name="currentPassword" required autocomplete="current-password" data-testid="email-current-password">
+  </label>
+  <p data-error-for="currentPassword" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("account.email.submit") }}</button>
+</form>
+<p id="email-requested" hidden role="status" data-testid="email-requested">{{ ctx.tr.t("account.email.requested") }}</p>
+{% endif %}
+
 <h2>{{ ctx.tr.t("account.password.title") }}</h2>
 <form data-api="/api/auth/password" data-success="#password-changed" data-testid="password-form" novalidate>
   <p data-form-error role="alert" data-testid="form-error"></p>

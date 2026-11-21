@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod pages;
 pub mod password;
 pub mod routes_auth;
+pub mod routes_email;
 pub mod routes_password;
 pub mod security;
 pub mod server;
