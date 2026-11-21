@@ -48,6 +48,11 @@ impl ApiError {
         }))
     }
 
+    /// The HTTP status of the error.
+    pub fn status(&self) -> StatusCode {
+        self.0.status
+    }
+
     /// Replaces the machine-readable code of the error.
     pub fn with_code(mut self, code: &str) -> Self {
         code.clone_into(&mut self.0.code);
@@ -181,6 +186,17 @@ pub fn issue_message(issue: FieldIssue) -> &'static str {
         FieldIssue::PasswordUnchanged => "Nowe hasło musi się różnić od obecnego.",
         FieldIssue::TokenRequired => "Podaj token z linku.",
         FieldIssue::TokenTooLong => "Token jest za długi.",
+        FieldIssue::GuestWarningRequired => "Potwierdź, że rozumiesz ograniczenia gry bez konta.",
+        FieldIssue::NicknameGuestOnly => "Nick podaje tylko gość.",
+        FieldIssue::NicknameTooLong => "Nick może mieć najwyżej 24 znaków.",
+        FieldIssue::NicknameInvalid => "Nick może zawierać litery, cyfry, spacje oraz znaki _ i -.",
+        FieldIssue::NicknameReserved => "Ta nazwa jest zastrzeżona.",
+        FieldIssue::JoinAsRequired => "Wybierz, jak dołączasz do partii.",
+        FieldIssue::ColumnInvalid => "Nieprawidłowa kolumna.",
+        FieldIssue::RowInvalid => "Nieprawidłowy rząd.",
+        FieldIssue::MoveNumberInvalid => "Nieprawidłowy numer ruchu.",
+        FieldIssue::AfterInvalid => "Nieprawidłowy parametr after.",
+        FieldIssue::CursorInvalid => "Nieprawidłowy parametr cursor.",
     }
 }
 
@@ -266,4 +282,36 @@ pub async fn read_json(body: Body, headers: &axum::http::HeaderMap) -> Result<Va
 /// A string field of a JSON object body; `None` when absent or not a string.
 pub fn string_field<'a>(body: &'a Value, key: &str) -> Option<&'a str> {
     body.get(key)?.as_str()
+}
+
+/// Like [`read_json`], but a request without a body is `{}`: for endpoints whose body only carries optional settings. A
+/// body that is present must still be valid JSON.
+pub async fn read_optional_json(
+    body: Body,
+    headers: &axum::http::HeaderMap,
+) -> Result<Value, ApiError> {
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    if declared.is_some_and(|length| length > API_BODY_MAX_BYTES) {
+        return Err(ApiError::payload_too_large());
+    }
+    let bytes = to_bytes(body, API_BODY_MAX_BYTES)
+        .await
+        .map_err(|_| ApiError::payload_too_large())?;
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(json!({}));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| ApiError::validation("Nieprawidłowe dane żądania."))
+}
+
+/// An integer field of a JSON object body.
+pub fn int_field(body: &Value, key: &str) -> Option<i64> {
+    body.get(key)?.as_i64()
+}
+
+/// A boolean field of a JSON object body.
+pub fn bool_field(body: &Value, key: &str) -> Option<bool> {
+    body.get(key)?.as_bool()
 }

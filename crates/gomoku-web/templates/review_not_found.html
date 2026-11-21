@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("review.notFoundTitle") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("review.notFoundTitle") }}</h1>
+<p>{{ ctx.tr.t("review.notFoundBody") }}</p>
+<p><a href="/history">{{ ctx.tr.t("review.backToHistory") }}</a></p>
+{% endblock %}

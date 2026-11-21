@@ -168,7 +168,9 @@ impl Database {
             "SELECT s.id AS session_id, s.expires_at, u.id AS user_id, u.email, u.display_name, \
                     u.email_verified_at \
              FROM sessions s JOIN users u ON u.id = s.user_id \
-             WHERE s.token_hash = $1 AND s.expires_at > $2",
+             WHERE s.token_hash = $1 AND (s.expires_at > $2 OR EXISTS ( \
+                SELECT 1 FROM game_players p JOIN games g ON g.id = p.game_id \
+                WHERE p.user_id = s.user_id AND p.is_active AND g.status = 'active' AND g.started_at <= s.expires_at))",
         )
         .bind(token_hash)
         .bind(now)
@@ -189,7 +191,13 @@ impl Database {
     }
 
     /// Revokes only the session behind `token_hash`; idempotent.
+    /// Whoever logs out also stops looking for a game (best effort: a failure here must not keep the session alive; the
+    /// status expires on its own).
     pub async fn revoke_session(&self, token_hash: &str) -> Result<(), DbError> {
+        let _ = sqlx::query("DELETE FROM lobby_seekers WHERE user_id IN (SELECT user_id FROM sessions WHERE token_hash = $1)")
+            .bind(token_hash)
+            .execute(self.pool())
+            .await;
         sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
             .bind(token_hash)
             .execute(self.pool())

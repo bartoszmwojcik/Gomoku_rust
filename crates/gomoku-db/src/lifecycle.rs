@@ -16,6 +16,8 @@ pub enum DeleteOutcome {
     Protected,
     /// The stored hash is not the one that was verified (the password changed meanwhile).
     HashChanged,
+    /// A game is in progress; nothing was written.
+    ActiveGame(Uuid),
 }
 
 /// What `provision_admin` did.
@@ -53,7 +55,14 @@ impl Database {
         user_id: Uuid,
         verified_hash: &str,
         is_protected: impl Fn(&str) -> bool,
-    ) -> Result<DeleteOutcome, DbError> {
+        now: OffsetDateTime,
+    ) -> Result<DeleteOutcome, crate::games::GameError> {
+        // Games the clock or the ready deadline already ended are closed first, so only a game truly in progress blocks.
+        self.settle_for(user_id, now).await?;
+        {
+            let mut conn = self.pool().acquire().await?;
+            crate::games::close_stale_of_user(&mut conn, now, user_id).await?;
+        }
         let mut tx = self.pool().begin().await?;
         let locked = sqlx::query("SELECT email FROM users WHERE id = $1 FOR NO KEY UPDATE")
             .bind(user_id)
@@ -66,6 +75,53 @@ impl Database {
         if is_protected(&email) {
             return Ok(DeleteOutcome::Protected);
         }
+        // The account's games that still matter, locked in game-id order: a game in progress refuses the deletion before
+        // any write; the games still waiting are removed with their invitations.
+        let open = sqlx::query(
+            "SELECT g.id, g.status FROM games g JOIN game_players p ON p.game_id = g.id \
+             WHERE p.user_id = $1 AND g.status IN ('waiting', 'active') ORDER BY g.id FOR UPDATE OF g",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut waiting = Vec::new();
+        for row in &open {
+            let status: String = row.try_get("status")?;
+            let id: Uuid = row.try_get("id")?;
+            if status == "active" {
+                return Ok(DeleteOutcome::ActiveGame(id));
+            }
+            waiting.push(id);
+        }
+        if !waiting.is_empty() {
+            sqlx::query("DELETE FROM games WHERE id = ANY($1)")
+                .bind(&waiting)
+                .execute(&mut *tx)
+                .await?;
+        }
+        // Pending rematch offers the account is part of are closed (locked in the same order).
+        let offers = sqlx::query(
+            "SELECT g.id FROM games g JOIN game_players p ON p.game_id = g.id \
+             WHERE p.user_id = $1 AND g.rematch_state = 'pending' ORDER BY g.id FOR UPDATE OF g",
+        )
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let offer_ids: Vec<Uuid> = offers
+            .iter()
+            .map(|r| r.try_get("id"))
+            .collect::<Result<_, _>>()?;
+        if !offer_ids.is_empty() {
+            sqlx::query("UPDATE games SET rematch_state = 'declined' WHERE id = ANY($1)")
+                .bind(&offer_ids)
+                .execute(&mut *tx)
+                .await?;
+        }
+        // The deleted account's name must not outlive it: the seat shows "deleted player".
+        sqlx::query("UPDATE game_players SET display_name = NULL WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
         let deleted = sqlx::query("DELETE FROM users WHERE id = $1 AND password_hash = $2")
             .bind(user_id)
             .bind(verified_hash)

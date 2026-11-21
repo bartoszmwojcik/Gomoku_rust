@@ -110,6 +110,38 @@ impl Translator {
         })
     }
 
+    /// The text of a counted phrase: `key.one|few|many|other` by the language's plural rule (missing category: `other`),
+    /// with `{count}` filled.
+    pub fn t_plural(&self, key: &str, count: u64) -> String {
+        let category = self.locale.plural(count).suffix();
+        let specific = format!("{key}.{category}");
+        let text = if self.catalogs.lookup(self.locale, &specific).is_some() {
+            self.t(&specific)
+        } else {
+            self.t(&format!("{key}.other"))
+        };
+        text.replace("{count}", &count.to_string())
+    }
+
+    /// All texts under any of `prefixes`, with their full keys, as one JSON object (the chain merged), for the scripts
+    /// that render screens in the browser.
+    pub fn bag_json(&self, prefixes: &[&str]) -> String {
+        let mut merged: BTreeMap<&str, &str> = BTreeMap::new();
+        for locale in self.locale.fallback_chain().iter().rev() {
+            if let Some(flat) = self.catalogs.by_locale.get(locale.code()) {
+                for (key, text) in flat
+                    .iter()
+                    .filter(|(key, _)| prefixes.iter().any(|p| key.starts_with(p)))
+                {
+                    merged.insert(key, text);
+                }
+            }
+        }
+        serde_json::to_string(&merged)
+            .unwrap_or_else(|_| "{}".to_owned())
+            .replace('<', "\\u003c")
+    }
+
     /// All texts under `prefix` (the prefix removed) as one JSON object, merged along the fallback chain; for the
     /// form script, which translates server error codes in the browser.
     pub fn subtree_json(&self, prefix: &str) -> String {
@@ -244,6 +276,38 @@ mod tests {
         assert_eq!(
             catalogs().translator(Locale::Pl).subtree_json("none."),
             "{}"
+        );
+    }
+
+    #[test]
+    fn counted_phrases_pick_the_plural_form_and_the_bag_keeps_full_keys() {
+        let catalogs = Catalogs::from_sources(&[
+            ("pl", r#"{"n.one":"{count} minuta","n.few":"{count} minuty","n.many":"{count} minut","n.other":"{count} min","x.a":"A","y.b":"B"}"#),
+            ("en", r#"{"n.one":"{count} minute","n.other":"{count} minutes"}"#),
+        ])
+        .unwrap();
+        let pl = catalogs.translator(Locale::Pl);
+        assert_eq!(
+            (
+                pl.t_plural("n", 1),
+                pl.t_plural("n", 3),
+                pl.t_plural("n", 10)
+            ),
+            ("1 minuta".into(), "3 minuty".into(), "10 minut".into())
+        );
+        let en = catalogs.translator(Locale::En);
+        assert_eq!(
+            (en.t_plural("n", 1), en.t_plural("n", 5)),
+            ("1 minute".into(), "5 minutes".into())
+        );
+        // A category the language lacks falls back to `other`.
+        let fr = catalogs.translator(Locale::Fr);
+        assert_eq!(fr.t_plural("n", 2), "2 minutes");
+        let bag = pl.bag_json(&["x.", "n."]);
+        assert!(
+            bag.contains(r#""x.a":"A""#)
+                && bag.contains(r#""n.few":"{count} minuty""#)
+                && !bag.contains("y.b")
         );
     }
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use gomoku_db::Database;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -15,7 +15,10 @@ use crate::email::EmailSender;
 use crate::health::{HealthProbe, health};
 use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
-use crate::{pages, routes_account, routes_auth, routes_email, routes_password};
+use crate::{
+    pages, pages_games, routes_account, routes_auth, routes_email, routes_games, routes_lobby,
+    routes_password,
+};
 
 /// Shared application state: explicit composition instead of a DI container.
 #[derive(Clone)]
@@ -66,6 +69,31 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
             patch(routes_email::change_display_name),
         )
         .route("/account/delete", post(routes_account::delete))
+        .route("/games", post(routes_games::create_game))
+        .route("/games/{id}", get(routes_games::get_game))
+        .route("/games/{id}/moves", post(routes_games::post_move))
+        .route("/games/{id}/resign", post(routes_games::post_resign))
+        .route("/games/{id}/cancel", post(routes_games::post_cancel))
+        .route("/games/{id}/rematch", post(routes_games::rematch_offer))
+        .route(
+            "/games/{id}/rematch/accept",
+            post(routes_games::rematch_accept),
+        )
+        .route(
+            "/games/{id}/rematch/decline",
+            post(routes_games::rematch_decline),
+        )
+        .route(
+            "/invitations/{code}/accept",
+            post(routes_games::accept_invitation),
+        )
+        .route("/lobby", get(routes_lobby::lobby))
+        .route(
+            "/lobby/seeking",
+            put(routes_lobby::mark_seeking).delete(routes_lobby::withdraw_seeking),
+        )
+        .route("/lobby/seekers/{id}/pick", post(routes_lobby::pick))
+        .route("/history", get(routes_lobby::history))
         .layer(from_fn_with_state(state.clone(), csrf));
     Router::new()
         .route("/", get(pages::home))
@@ -76,8 +104,13 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route("/confirm-email-change", get(pages::confirm_email_change))
         .route("/forgot-password", get(pages::forgot_password))
         .route("/reset-password", get(pages::reset_password))
-        .route("/spike/board", get(pages::board))
-        .route("/spike/clock", get(pages::clock))
+        .route("/play", get(pages_games::play))
+        .route("/join", get(pages_games::join))
+        .route("/invite/{code}", get(pages_games::invite))
+        .route("/games/{id}", get(pages_games::game_room))
+        .route("/games/{id}/review", get(pages_games::review))
+        .route("/lobby", get(pages_games::lobby))
+        .route("/history", get(pages_games::history))
         .route("/api/health", get(health))
         .nest("/api", api)
         .nest_service("/assets", ServeDir::new(assets_dir))

@@ -38,6 +38,18 @@ pub enum FieldIssue {
     PasswordUnchanged,
     TokenRequired,
     TokenTooLong,
+    /// Game inputs.
+    GuestWarningRequired,
+    NicknameGuestOnly,
+    NicknameTooLong,
+    NicknameInvalid,
+    NicknameReserved,
+    JoinAsRequired,
+    ColumnInvalid,
+    RowInvalid,
+    MoveNumberInvalid,
+    AfterInvalid,
+    CursorInvalid,
 }
 
 impl FieldIssue {
@@ -59,6 +71,17 @@ impl FieldIssue {
             FieldIssue::PasswordUnchanged => "PASSWORD_UNCHANGED",
             FieldIssue::TokenRequired => "TOKEN_REQUIRED",
             FieldIssue::TokenTooLong => "TOKEN_TOO_LONG",
+            FieldIssue::GuestWarningRequired => "GUEST_WARNING_REQUIRED",
+            FieldIssue::NicknameGuestOnly => "NICKNAME_GUEST_ONLY",
+            FieldIssue::NicknameTooLong => "NICKNAME_TOO_LONG",
+            FieldIssue::NicknameInvalid => "NICKNAME_INVALID",
+            FieldIssue::NicknameReserved => "NICKNAME_RESERVED",
+            FieldIssue::JoinAsRequired => "AS_REQUIRED",
+            FieldIssue::ColumnInvalid => "COLUMN_INVALID",
+            FieldIssue::RowInvalid => "ROW_INVALID",
+            FieldIssue::MoveNumberInvalid => "MOVE_NUMBER_INVALID",
+            FieldIssue::AfterInvalid => "AFTER_INVALID",
+            FieldIssue::CursorInvalid => "CURSOR_INVALID",
         }
     }
 }
@@ -405,6 +428,17 @@ mod tests {
             (FieldIssue::PasswordUnchanged, "PASSWORD_UNCHANGED"),
             (FieldIssue::TokenRequired, "TOKEN_REQUIRED"),
             (FieldIssue::TokenTooLong, "TOKEN_TOO_LONG"),
+            (FieldIssue::GuestWarningRequired, "GUEST_WARNING_REQUIRED"),
+            (FieldIssue::NicknameGuestOnly, "NICKNAME_GUEST_ONLY"),
+            (FieldIssue::NicknameTooLong, "NICKNAME_TOO_LONG"),
+            (FieldIssue::NicknameInvalid, "NICKNAME_INVALID"),
+            (FieldIssue::NicknameReserved, "NICKNAME_RESERVED"),
+            (FieldIssue::JoinAsRequired, "AS_REQUIRED"),
+            (FieldIssue::ColumnInvalid, "COLUMN_INVALID"),
+            (FieldIssue::RowInvalid, "ROW_INVALID"),
+            (FieldIssue::MoveNumberInvalid, "MOVE_NUMBER_INVALID"),
+            (FieldIssue::AfterInvalid, "AFTER_INVALID"),
+            (FieldIssue::CursorInvalid, "CURSOR_INVALID"),
         ];
         for (issue, code) in all {
             assert_eq!(issue.code(), code);

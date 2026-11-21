@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("game.gate.title") }}{% endblock %}
+{% block content %}
+<h1 data-testid="gate-title">{{ ctx.tr.t("game.gate.title") }}</h1>
+<p>{{ ctx.tr.t("game.gate.body") }}</p>
+<p><a href="/">{{ ctx.tr.t("game.shared.backHome") }}</a></p>
+{% endblock %}

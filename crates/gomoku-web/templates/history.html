@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("history.meta.title") }}{% endblock %}
+{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/history.js" defer></script>{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("history.heading") }}</h1>
+<section aria-label="{{ ctx.tr.t("history.listTitle") }}">
+  <h2>{{ ctx.tr.t("history.listTitle") }}</h2>
+  <div id="history" data-testid="history"></div>
+</section>
+<script type="application/json" id="history-initial">{{ initial|safe }}</script>
+<p><a href="/">{{ ctx.tr.t("history.backHome") }}</a></p>
+{% endblock %}

@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
-# Coverage gates (decision 4 in .ai/specs/2026-11-21-rust-rewrite-plan.md):
+# Coverage gates (decision 4 in .ai/specs/2026-11-21-rust-rewrite-plan.md), measured over the WHOLE workspace run, so
+# integration tests on a real PostgreSQL count towards the crate they exercise:
 #   gomoku-core: 100% lines and functions (pure logic);
-#   gomoku-db, gomoku-web: >= 85% lines per crate, main.rs (process wiring) excluded.
-# gomoku-db tests need Docker (Testcontainers). Use `scripts/coverage.sh core web` to skip it.
+#   gomoku-db, gomoku-web: >= 85% lines per crate; process entry points (main.rs, src/bin/) are excluded.
+# Needs Docker (Testcontainers) and python3.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-targets=("$@")
-[ ${#targets[@]} -eq 0 ] && targets=(core db web)
-
-for t in "${targets[@]}"; do
-  case "$t" in
-    core) cargo llvm-cov -p gomoku-core --fail-under-lines 100 --fail-under-functions 100 ;;
-    db)   cargo llvm-cov -p gomoku-db --ignore-filename-regex 'src/bin/' --fail-under-lines 85 ;;
-    web)  cargo llvm-cov -p gomoku-web --ignore-filename-regex '(main\.rs|src/bin/)' --fail-under-lines 85 ;;
-    *) echo "unknown target: $t" >&2; exit 2 ;;
-  esac
-done
+mkdir -p target
+cargo llvm-cov clean --workspace >/dev/null
+cargo llvm-cov --workspace --ignore-filename-regex '(main\.rs|src/bin/)' --json --summary-only --output-path target/coverage.json
+python3 scripts/check_coverage.py target/coverage.json

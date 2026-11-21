@@ -21,7 +21,8 @@ const DAY_MS: i64 = 24 * HOUR_MS;
 pub const LONGEST_RATE_LIMIT_WINDOW_MS: i64 = 24 * HOUR_MS;
 
 /// Tables with an expiry-like column that deliberately have no rule (none yet).
-pub const EXEMPT_TABLES: [&str; 0] = [];
+/// Rows of `invitations` go with their game (`ON DELETE CASCADE`), so the games rules cover them.
+pub const EXEMPT_TABLES: [&str; 1] = ["invitations"];
 
 /// One cleanup rule. `condition` and the names are static text; the cutoff is the bound `$1`, the batch size `$2`.
 #[derive(Debug, Clone, Copy)]
@@ -35,9 +36,12 @@ pub struct Rule {
     pub grace_ms: i64,
     /// The rule skips the account of the protected e-mail (the installation administrator) when one is given.
     pub protects_email: bool,
+    /// Instead of deleting the matching rows, sets this column to `NULL` (the condition must stop matching once it is
+    /// cleared, or the rule never ends).
+    pub clear_column: Option<&'static str>,
 }
 
-pub const RULES: [Rule; 6] = [
+pub const RULES: [Rule; 13] = [
     Rule {
         // 1 h margin: a session that expired mid-game stays until the game ends (games last well under an hour).
         key: "sessions",
@@ -46,6 +50,7 @@ pub const RULES: [Rule; 6] = [
         condition: "expires_at < $1",
         grace_ms: HOUR_MS,
         protects_email: false,
+        clear_column: None,
     },
     Rule {
         key: "rateLimitBuckets",
@@ -54,6 +59,7 @@ pub const RULES: [Rule; 6] = [
         condition: "window_start < $1",
         grace_ms: LONGEST_RATE_LIMIT_WINDOW_MS + 24 * HOUR_MS,
         protects_email: false,
+        clear_column: None,
     },
     Rule {
         key: "emailVerificationTokens",
@@ -62,6 +68,7 @@ pub const RULES: [Rule; 6] = [
         condition: "expires_at < $1 OR used_at < $1",
         grace_ms: DAY_MS,
         protects_email: false,
+        clear_column: None,
     },
     Rule {
         key: "passwordResetTokens",
@@ -70,6 +77,7 @@ pub const RULES: [Rule; 6] = [
         condition: "expires_at < $1 OR used_at < $1",
         grace_ms: DAY_MS,
         protects_email: false,
+        clear_column: None,
     },
     Rule {
         key: "emailChangeTokens",
@@ -78,6 +86,86 @@ pub const RULES: [Rule; 6] = [
         condition: "expires_at < $1 OR used_at < $1",
         grace_ms: DAY_MS,
         protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // "Looking for a game" statuses live 5 minutes and reads filter on `expires_at`, so a dead row never matters for
+        // correctness; the 1 h margin only absorbs clock skew between the application and the database.
+        key: "lobbySeekers",
+        table: "lobby_seekers",
+        primary_key: "id",
+        condition: "expires_at < $1",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // An unjoined game whose invitation expired: kept for 1 h after the expiry, because the guest creator's token works
+        // that long and shows "invitation expired". Players and the invitation go with the game (cascade).
+        key: "waitingGames",
+        table: "games",
+        primary_key: "id",
+        condition: "status = 'waiting' AND EXISTS (SELECT 1 FROM invitations i WHERE i.game_id = games.id AND i.expires_at < $1)",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // Cancelled games: 24 h after creation, plus the 1 h window of an unjoined one.
+        key: "cancelledGames",
+        table: "games",
+        primary_key: "id",
+        condition: "status = 'cancelled' AND created_at < $1",
+        grace_ms: 25 * HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // Dead active games of guests only (nobody has a history of them): removed 1 h after the clock ran out, without
+        // writing a result, so a returning player can still open the game and see the lazy loss on time.
+        key: "guestOnlyActiveGames",
+        table: "games",
+        primary_key: "id",
+        condition: "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
+                    AND COALESCE(turn_started_at + (CASE WHEN (CASE WHEN move_count % 2 = 0 THEN black_seat ELSE 3 - black_seat END) = 1 \
+                                                          THEN clock_ms_1 ELSE clock_ms_2 END) * interval '1 millisecond', \
+                                 started_at + 900000 * interval '1 millisecond') < $1",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // Finished games of guests only: removed 1 h after the end (the guest token window). `kind`, not `user_id IS NULL`:
+        // a deleted account has no user but stays `account`, which protects its opponent's history.
+        key: "guestOnlyFinishedGames",
+        table: "games",
+        primary_key: "id",
+        condition: "status = 'finished' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
+                    AND finished_at < $1",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // Finished games with no living account (every account deleted): nobody has a history of them.
+        key: "orphanedFinishedGames",
+        table: "games",
+        primary_key: "id",
+        condition: "status = 'finished' AND finished_at < $1 \
+                    AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.user_id IS NOT NULL)",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // A guest's token dies 1 h after the game finished: the hash is cleared (the rows stay for the opponent's history).
+        key: "guestTokens",
+        table: "game_players",
+        primary_key: "id",
+        condition: "guest_token_hash IS NOT NULL AND game_id IN (SELECT id FROM games WHERE finished_at < $1)",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: Some("guest_token_hash"),
     },
     Rule {
         // Unconfirmed accounts older than 14 days. Last on purpose: by then the sweep of the same run is done. The
@@ -85,9 +173,11 @@ pub const RULES: [Rule; 6] = [
         key: "unverifiedUsers",
         table: "users",
         primary_key: "id",
-        condition: "email_verified_at IS NULL AND created_at < $1",
+        condition: "email_verified_at IS NULL AND created_at < $1 \
+                    AND NOT EXISTS (SELECT 1 FROM game_players gp WHERE gp.user_id = users.id)",
         grace_ms: 14 * DAY_MS,
         protects_email: true,
+        clear_column: None,
     },
 ];
 
@@ -108,6 +198,13 @@ pub struct CleanupResult {
     pub email_verification_tokens: u64,
     pub password_reset_tokens: u64,
     pub email_change_tokens: u64,
+    pub lobby_seekers: u64,
+    pub waiting_games: u64,
+    pub cancelled_games: u64,
+    pub guest_only_active_games: u64,
+    pub guest_only_finished_games: u64,
+    pub orphaned_finished_games: u64,
+    pub guest_tokens: u64,
     pub unverified_users: u64,
     pub errors: Vec<RuleError>,
     pub truncated: bool,
@@ -121,6 +218,13 @@ impl CleanupResult {
             "emailVerificationTokens" => &mut self.email_verification_tokens,
             "passwordResetTokens" => &mut self.password_reset_tokens,
             "emailChangeTokens" => &mut self.email_change_tokens,
+            "lobbySeekers" => &mut self.lobby_seekers,
+            "waitingGames" => &mut self.waiting_games,
+            "cancelledGames" => &mut self.cancelled_games,
+            "guestOnlyActiveGames" => &mut self.guest_only_active_games,
+            "guestOnlyFinishedGames" => &mut self.guest_only_finished_games,
+            "orphanedFinishedGames" => &mut self.orphaned_finished_games,
+            "guestTokens" => &mut self.guest_tokens,
             "unverifiedUsers" => &mut self.unverified_users,
             _ => return None,
         })
@@ -155,8 +259,12 @@ fn batch_sql(rule: &Rule, protected: bool) -> String {
     } else {
         ""
     };
+    let action = match rule.clear_column {
+        Some(column) => format!("UPDATE {} SET {column} = NULL", rule.table),
+        None => format!("DELETE FROM {}", rule.table),
+    };
     format!(
-        "DELETE FROM {table} WHERE {pk} IN (SELECT {pk} FROM {table} WHERE ({condition}){protection} \
+        "{action} WHERE {pk} IN (SELECT {pk} FROM {table} WHERE ({condition}){protection} \
          LIMIT $2 FOR UPDATE SKIP LOCKED)",
         table = rule.table,
         pk = rule.primary_key,

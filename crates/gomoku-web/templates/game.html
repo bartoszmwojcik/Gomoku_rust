@@ -1,0 +1,8 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("game.meta.title") }}{% endblock %}
+{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/game-room.js" defer></script>{% endblock %}
+{% block content %}
+<div id="game-room" data-game-id="{{ game_id }}" data-secure="{{ secure }}" data-testid="game-room"></div>
+<noscript><p>{{ ctx.tr.t("game.shared.network") }}</p></noscript>
+<script type="application/json" id="game-initial">{{ initial|safe }}</script>
+{% endblock %}
