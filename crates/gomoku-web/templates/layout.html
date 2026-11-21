@@ -1,15 +1,39 @@
 <!doctype html>
-<html lang="pl">
+<html lang="{{ ctx.tr.lang() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Gomoku{% endblock %}</title>
+  <title>{% block title %}{{ ctx.tr.t("app.name") }}{% endblock %}</title>
   <link rel="stylesheet" href="/assets/game-tokens.css">
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/htmx.min.js" defer></script>
+  <script src="/assets/forms.js" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
+  <header class="topbar">
+    <nav aria-label="{{ ctx.tr.t("nav.main") }}">
+      <a href="/" class="brand">{{ ctx.tr.t("app.name") }}</a>
+      {% match ctx.user %}
+      {% when Some with (user) %}
+      <a href="/account" data-testid="nav-account">{{ user.display_name }}</a>
+      <form data-api="/api/auth/logout" data-redirect="/" data-testid="logout-form">
+        <button type="submit" data-testid="logout">{{ ctx.tr.t("nav.logout") }}</button>
+        <span data-form-error role="alert"></span>
+      </form>
+      {% when None %}
+      <a href="/login" data-testid="nav-login">{{ ctx.tr.t("nav.login") }}</a>
+      <a href="/register" data-testid="nav-register">{{ ctx.tr.t("nav.register") }}</a>
+      {% endmatch %}
+    </nav>
+    <nav class="lang" aria-label="{{ ctx.tr.t("nav.language") }}">
+      <a href="{{ ctx.path }}?lang=pl" lang="pl" hreflang="pl">Polski</a>
+      <a href="{{ ctx.path }}?lang=en" lang="en" hreflang="en">English</a>
+      <a href="{{ ctx.path }}?lang=fr" lang="fr" hreflang="fr">Français</a>
+    </nav>
+  </header>
   <main>{% block content %}{% endblock %}</main>
+  <script type="application/json" id="i18n-errors">{{ ctx.errors_json|safe }}</script>
+  <script type="application/json" id="i18n-form" data-sending="{{ ctx.tr.t("form.sending") }}" data-network="{{ ctx.tr.t("form.networkError") }}" data-unexpected="{{ ctx.tr.t("form.unexpectedError") }}"></script>
 </body>
 </html>

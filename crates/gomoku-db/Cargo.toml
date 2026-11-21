@@ -6,9 +6,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-rustls"] }
+dotenvy = "0.15.7"
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-rustls", "uuid", "time"] }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "macros"] }
+time = "0.3.55"
+tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time"] }
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
 
 [lints]
 workspace = true

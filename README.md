@@ -11,6 +11,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # jednorazowo; 
 cargo install cargo-llvm-cov --locked                            # jednorazowo, do pokrycia
 docker compose up -d                                             # PostgreSQL
 cp .env.example .env
+cargo run -p gomoku-db -- migrate                                # schemat bazy
 cargo run -p gomoku-web                                          # http://localhost:3000
 ```
 
@@ -22,13 +23,14 @@ cargo run -p gomoku-web                                          # http://localh
 | `cargo clippy --workspace --all-targets -- -D warnings` | lint |
 | `cargo test --workspace` | testy (db wymaga Dockera) |
 | `scripts/coverage.sh [core db web]` | bramki pokrycia |
-| `docker build -t gomoku-rust .` | obraz produkcyjny |
+| `cargo run -p gomoku-db -- migrate` | migracje (aplikacja sama ich nie uruchamia) |
+| `docker build -t gomoku-rust .` | obraz produkcyjny (zawiera `gomoku-web` i `gomoku-db`) |
 
 ## Struktura
 
 ```
 crates/gomoku-core  reguły gry, zegar, boty (bez HTTP i bazy)
-crates/gomoku-db    konfiguracja, pula, migracje (SQLx)
-crates/gomoku-web   Axum + Askama + htmx
+crates/gomoku-db    konfiguracja, pula, migracje, konta, sesje, limity (SQLx; CLI `gomoku-db`)
+crates/gomoku-web   Axum + Askama + htmx; katalogi tekstów w `crates/gomoku-web/i18n/{pl,en,fr}.json`
 assets/             tokeny design systemu, CSS, JS
 ```

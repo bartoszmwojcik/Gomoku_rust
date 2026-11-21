@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block title %}{{ ctx.tr.t("account.title") }} · {{ ctx.tr.t("app.name") }}{% endblock %}
+{% block content %}
+<h1>{{ ctx.tr.t("account.title") }}</h1>
+<dl>
+  <dt>{{ ctx.tr.t("account.displayName") }}</dt>
+  <dd data-testid="account-display-name">{{ display_name }}</dd>
+  <dt>{{ ctx.tr.t("account.email") }}</dt>
+  <dd><span data-testid="account-email">{{ email }}</span>
+    <span data-testid="account-verified">{% if verified %}{{ ctx.tr.t("account.verified") }}{% else %}{{ ctx.tr.t("account.unverified") }}{% endif %}</span></dd>
+</dl>
+{% endblock %}

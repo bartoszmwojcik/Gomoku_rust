@@ -1,11 +1,13 @@
 //! Process entry point: wiring only (environment, logging, signals). Logic lives in the library.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use gomoku_db::{Database, DbConfig};
 use gomoku_web::app::{AppState, build_router};
+use gomoku_web::clock::system_clock;
 use gomoku_web::config::AppConfig;
+use gomoku_web::i18n::Catalogs;
+use gomoku_web::password::PasswordHasher;
 use gomoku_web::server::serve;
 
 #[tokio::main]
@@ -19,20 +21,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let lookup = |key: &str| std::env::var(key).ok();
-    let app_config = AppConfig::from_lookup(lookup)?;
+    let config = AppConfig::from_lookup(lookup)?;
     let db = Database::connect_lazy(&DbConfig::from_lookup(lookup)?)?;
+    // Migrations are applied by `gomoku-db migrate` / the deployment, never implicitly by the app.
 
     let state = AppState {
-        health: Arc::new(db),
-        now: Arc::new(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs())
-        }),
+        hasher: PasswordHasher::new(config.password)?,
+        health: Arc::new(db.clone()),
+        db,
+        clock: system_clock(),
+        catalogs: Catalogs::embedded()?,
+        config: Arc::new(config.clone()),
     };
-    let router = build_router(state, &app_config.assets_dir);
-    let listener = tokio::net::TcpListener::bind(app_config.bind_addr).await?;
-    tracing::info!(addr = %app_config.bind_addr, "listening");
+    let router = build_router(state, &config.assets_dir);
+    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    tracing::info!(addr = %config.bind_addr, "listening");
     serve(listener, router, async {
         let _ = tokio::signal::ctrl_c().await;
     })

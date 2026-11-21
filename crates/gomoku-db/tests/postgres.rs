@@ -3,11 +3,16 @@
 
 use gomoku_db::{Database, DbConfig};
 use testcontainers_modules::postgres::Postgres;
+use testcontainers_modules::testcontainers::ImageExt;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 #[tokio::test]
 async fn migrates_and_pings_a_real_postgres() {
-    let container = Postgres::default().start().await.expect("start postgres");
+    let container = Postgres::default()
+        .with_tag("17")
+        .start()
+        .await
+        .expect("start postgres");
     let port = container.get_host_port_ipv4(5432).await.expect("port");
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let config = DbConfig { url, pool_max: 2 };
@@ -31,4 +36,24 @@ async fn ping_fails_when_database_is_down() {
     };
     let db = Database::connect_lazy(&config).expect("lazy pool never fails to build");
     assert!(db.ping().await.is_err());
+}
+
+#[tokio::test]
+async fn the_cli_applies_migrations() {
+    let container = Postgres::default()
+        .with_tag("17")
+        .start()
+        .await
+        .expect("start postgres");
+    let port = container.get_host_port_ipv4(5432).await.expect("port");
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let db = Database::connect_lazy(&DbConfig { url, pool_max: 2 }).expect("pool");
+    let message = gomoku_db::cli::run(&["migrate".to_owned()], &db)
+        .await
+        .expect("migrate");
+    assert_eq!(message, "migrations applied");
+    sqlx::query("SELECT count(*) FROM users")
+        .execute(db.pool())
+        .await
+        .expect("users table exists");
 }
