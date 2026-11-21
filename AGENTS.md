@@ -58,3 +58,8 @@ Jeśli czegoś nie dało się uruchomić (np. brak Dockera) — napisz to wprost
 4. Po poprawce użytkownika zapisz lekcję w `.ai/lessons/YYYY-MM-DD-slug.md` i linię w `.ai/lessons.md`.
 5. Pliki w `.ai/specs|docs|runs|lessons` nazywaj `YYYY-MM-DD-slug.md`. Przebiegi autonomiczne loguj w `.ai/runs/`.
 6. Skille `om-*` leżą w `.claude/skills/`; nie edytuj ich — odstępstwa zapisuj w `.ai/skills/<skill>/SKILL.md`.
+
+## Proces dostarczania (skille `om-*`)
+
+Konfiguracja pipeline'u: `.ai/agentic.config.json` (bramka walidacyjna = fmt, clippy, `scripts/coverage.sh`; tracker GitHub; przeglądarka `agent-browser`).
+Etapy, etykiety i bramka QA: `SDLC.md`; zasady review: `CODE_REVIEW.md`; chronione kontrakty: `BACKWARD_COMPATIBILITY.md`.
