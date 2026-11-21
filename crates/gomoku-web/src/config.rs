@@ -13,6 +13,8 @@ pub enum ConfigError {
     RequiredInProduction(&'static str),
     #[error("SESSION_COOKIE_SECURE=false is not allowed with an https APP_ORIGIN")]
     InsecureCookieWithHttps,
+    #[error("EMAIL_TRANSPORT=file is allowed in production only with an http:// APP_ORIGIN")]
+    FileTransportInProduction,
 }
 
 /// argon2id parameters; the defaults follow the OWASP recommendation (19 MiB, 2 iterations, 1 lane).
@@ -33,6 +35,48 @@ impl Default for PasswordParams {
     }
 }
 
+/// A secret that never shows up in logs: `Debug` prints a placeholder and there is no `Display`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret([redacted])")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmailTransport {
+    /// Development and tests: messages are appended as JSON lines to a file.
+    File,
+    /// Production: the Brevo transactional API over HTTPS.
+    Brevo,
+}
+
+/// Outgoing mail settings. Without a transport every send fails (accounts and games still work).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmailConfig {
+    pub transport: Option<EmailTransport>,
+    pub outbox_path: PathBuf,
+    /// Sender name shown in messages (`EMAIL_FROM_NAME`, else the older `EMAIL_FROM`).
+    pub from_name: String,
+    /// Verified sender address of the Brevo transport.
+    pub from_address: Option<String>,
+    pub brevo_api_key: Option<Secret>,
+    /// Global daily send limit per pool; without it nothing is limited by the app.
+    pub daily_limit: Option<u32>,
+}
+
 const CLIENT_IP_HEADERS: [&str; 3] = ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"];
 
 /// HTTP and security settings read from the environment.
@@ -48,6 +92,7 @@ pub struct AppConfig {
     pub client_ip_header: String,
     pub session_cookie_secure: bool,
     pub password: PasswordParams,
+    pub email: EmailConfig,
 }
 
 fn positive(
@@ -123,6 +168,29 @@ impl AppConfig {
             t_cost: positive(&lookup, "PASSWORD_HASH_T_COST")?.unwrap_or(defaults.t_cost),
             p_cost: defaults.p_cost,
         };
+        let transport = match lookup("EMAIL_TRANSPORT").as_deref() {
+            None | Some("") => None,
+            Some("file") => Some(EmailTransport::File),
+            Some("brevo") => Some(EmailTransport::Brevo),
+            Some(_) => return Err(ConfigError::Invalid("EMAIL_TRANSPORT")),
+        };
+        // The outbox holds full messages (links with tokens), so in production it is allowed only for a plain-http
+        // origin (a local stack); a real deployment must use a mail provider.
+        if production && transport == Some(EmailTransport::File) && https {
+            return Err(ConfigError::FileTransportInProduction);
+        }
+        let non_empty = |name: &str| lookup(name).filter(|raw| !raw.is_empty());
+        let email = EmailConfig {
+            transport,
+            outbox_path: non_empty("EMAIL_OUTBOX_PATH")
+                .map_or_else(|| PathBuf::from(".email-outbox.jsonl"), PathBuf::from),
+            from_name: non_empty("EMAIL_FROM_NAME")
+                .or_else(|| non_empty("EMAIL_FROM"))
+                .unwrap_or_else(|| "Gomoku".to_owned()),
+            from_address: non_empty("EMAIL_FROM_ADDRESS"),
+            brevo_api_key: non_empty("BREVO_API_KEY").map(Secret::new),
+            daily_limit: positive(&lookup, "EMAIL_DAILY_LIMIT")?,
+        };
         Ok(Self {
             bind_addr,
             assets_dir,
@@ -132,6 +200,7 @@ impl AppConfig {
             client_ip_header,
             session_cookie_secure,
             password,
+            email,
         })
     }
 }
@@ -223,6 +292,65 @@ mod tests {
             AppConfig::from_lookup(env(&[("BIND_ADDR", "nope")])),
             Err(ConfigError::BindAddr("nope".into()))
         );
+    }
+
+    #[test]
+    fn reads_the_email_settings() {
+        let cfg = AppConfig::from_lookup(env(&[])).unwrap();
+        assert_eq!(cfg.email.transport, None);
+        assert_eq!(cfg.email.from_name, "Gomoku");
+        assert_eq!(cfg.email.outbox_path, PathBuf::from(".email-outbox.jsonl"));
+        assert!(cfg.email.brevo_api_key.is_none() && cfg.email.daily_limit.is_none());
+
+        let cfg = AppConfig::from_lookup(env(&[
+            ("EMAIL_TRANSPORT", "brevo"),
+            ("EMAIL_FROM", "Old Name"),
+            ("EMAIL_FROM_ADDRESS", "noreply@gomoku.example"),
+            ("BREVO_API_KEY", "xkeysib-secret"),
+            ("EMAIL_DAILY_LIMIT", "176"),
+            ("EMAIL_OUTBOX_PATH", "/tmp/outbox.jsonl"),
+        ]))
+        .unwrap();
+        assert_eq!(cfg.email.transport, Some(EmailTransport::Brevo));
+        assert_eq!(cfg.email.from_name, "Old Name");
+        assert_eq!(
+            cfg.email.from_address.as_deref(),
+            Some("noreply@gomoku.example")
+        );
+        assert_eq!(
+            cfg.email.brevo_api_key.as_ref().map(Secret::expose),
+            Some("xkeysib-secret")
+        );
+        assert_eq!(cfg.email.daily_limit, Some(176));
+        // The newer name wins over the alias, and the key never shows up in debug output.
+        let named =
+            AppConfig::from_lookup(env(&[("EMAIL_FROM", "Old"), ("EMAIL_FROM_NAME", "New")]))
+                .unwrap();
+        assert_eq!(named.email.from_name, "New");
+        assert!(!format!("{cfg:?}").contains("xkeysib-secret"));
+        let file = AppConfig::from_lookup(env(&[("EMAIL_TRANSPORT", "file")])).unwrap();
+        assert_eq!(file.email.transport, Some(EmailTransport::File));
+    }
+
+    #[test]
+    fn rejects_bad_email_settings() {
+        assert!(AppConfig::from_lookup(env(&[("EMAIL_TRANSPORT", "smtp")])).is_err());
+        assert!(AppConfig::from_lookup(env(&[("EMAIL_DAILY_LIMIT", "0")])).is_err());
+        // The file transport is refused in production behind https, allowed behind plain http.
+        let mut pairs = PRODUCTION.to_vec();
+        pairs.push(("EMAIL_TRANSPORT", "file"));
+        assert_eq!(
+            AppConfig::from_lookup(env(&pairs)),
+            Err(ConfigError::FileTransportInProduction)
+        );
+        let local = AppConfig::from_lookup(env(&[
+            ("APP_ENV", "production"),
+            ("APP_ORIGIN", "http://localhost:3000"),
+            ("TRUST_PROXY_HOPS", "1"),
+            ("EMAIL_TRANSPORT", "file"),
+        ]))
+        .unwrap();
+        assert_eq!(local.email.transport, Some(EmailTransport::File));
     }
 
     #[test]

@@ -48,6 +48,12 @@ impl ApiError {
         }))
     }
 
+    /// Replaces the machine-readable code of the error.
+    pub fn with_code(mut self, code: &str) -> Self {
+        code.clone_into(&mut self.0.code);
+        self
+    }
+
     pub fn with_data(mut self, data: Value) -> Self {
         self.0.data = Some(data);
         self
@@ -171,6 +177,10 @@ pub fn issue_message(issue: FieldIssue) -> &'static str {
         FieldIssue::PasswordTooShort => "Hasło musi mieć co najmniej 8 znaków.",
         FieldIssue::PasswordTooLong => "Hasło może mieć najwyżej 72 bajtów.",
         FieldIssue::LoginPasswordTooLong => "Hasło może mieć najwyżej 1024 znaków.",
+        FieldIssue::CurrentPasswordRequired => "Podaj obecne hasło.",
+        FieldIssue::PasswordUnchanged => "Nowe hasło musi się różnić od obecnego.",
+        FieldIssue::TokenRequired => "Podaj token z linku.",
+        FieldIssue::TokenTooLong => "Token jest za długi.",
     }
 }
 

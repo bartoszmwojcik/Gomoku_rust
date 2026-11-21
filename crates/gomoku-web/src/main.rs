@@ -6,6 +6,7 @@ use gomoku_db::{Database, DbConfig};
 use gomoku_web::app::{AppState, build_router};
 use gomoku_web::clock::system_clock;
 use gomoku_web::config::AppConfig;
+use gomoku_web::email::create_email_sender;
 use gomoku_web::i18n::Catalogs;
 use gomoku_web::password::PasswordHasher;
 use gomoku_web::server::serve;
@@ -25,14 +26,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::connect_lazy(&DbConfig::from_lookup(lookup)?)?;
     // Migrations are applied by `gomoku-db migrate` / the deployment, never implicitly by the app.
 
+    let clock = system_clock();
     let state = AppState {
         hasher: PasswordHasher::new(config.password)?,
         health: Arc::new(db.clone()),
         db,
-        clock: system_clock(),
+        email: create_email_sender(&config.email, clock.clone()),
+        tasks: tokio_util::task::TaskTracker::new(),
+        clock,
         catalogs: Catalogs::embedded()?,
         config: Arc::new(config.clone()),
     };
+    let tasks = state.tasks.clone();
     let router = build_router(state, &config.assets_dir);
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, "listening");
@@ -40,5 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await?;
+    // Let the work that runs after a response (e.g. a reset e-mail being sent) finish.
+    tasks.close();
+    tasks.wait().await;
     Ok(())
 }

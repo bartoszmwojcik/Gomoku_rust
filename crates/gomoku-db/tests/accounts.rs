@@ -206,3 +206,214 @@ async fn rate_limit_counts_within_a_window_and_starts_a_new_one_after_it() {
     db.rate_limit_release("short", 50).await.unwrap();
     assert_eq!(db.rate_limit_hit("short", 50).await.unwrap().count, 1);
 }
+
+async fn count(db: &Database, sql: &str) -> i64 {
+    sqlx_scalar(db, sql).await
+}
+
+async fn verified_user(db: &Database, email: &str, name: &str, key: &str) -> gomoku_db::Uuid {
+    let id = register(db, email, name, key).await.unwrap();
+    sqlx::query("UPDATE users SET email_verified_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn changing_a_password_is_conditional_and_ends_other_sessions_and_links() {
+    let (db, _container) = database().await;
+    let id = verified_user(&db, "ala@example.com", "Ala", "ala").await;
+    let now = OffsetDateTime::now_utc();
+    let (other_hash, expires_at) = session("other", 1);
+    db.create_session(
+        id,
+        &NewSession {
+            token_hash: &other_hash,
+            expires_at,
+        },
+    )
+    .await
+    .unwrap();
+    let current = db
+        .find_valid_session(&format!("{:0>64}", "ala"), now)
+        .await
+        .unwrap()
+        .unwrap();
+    db.insert_reset_token(
+        id,
+        &format!("{:0>64}", "t1"),
+        now,
+        now + time::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        db.change_password(
+            id,
+            "$argon2id$hash",
+            "$argon2id$new",
+            current.session_id,
+            now
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        db.find_user_by_id(id).await.unwrap().unwrap().password_hash,
+        "$argon2id$new"
+    );
+    assert_eq!(
+        count(&db, "SELECT count(*) FROM sessions").await,
+        1,
+        "only the current session stays"
+    );
+    assert_eq!(
+        count(
+            &db,
+            "SELECT count(*) FROM password_reset_tokens WHERE used_at IS NULL"
+        )
+        .await,
+        0
+    );
+
+    // The second change with the stale hash loses the race and writes nothing.
+    assert!(
+        !db.change_password(
+            id,
+            "$argon2id$hash",
+            "$argon2id$other",
+            current.session_id,
+            now
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        db.find_user_by_id(id).await.unwrap().unwrap().password_hash,
+        "$argon2id$new"
+    );
+}
+
+#[tokio::test]
+async fn reset_links_are_consumed_once_and_only_for_confirmed_addresses() {
+    let (db, _container) = database().await;
+    let id = verified_user(&db, "ala@example.com", "Ala", "ala").await;
+    let bob = register(&db, "bob@example.com", "Bob", "bob")
+        .await
+        .unwrap();
+    let now = OffsetDateTime::now_utc();
+    let later = now + time::Duration::hours(1);
+    let hash = |n: &str| format!("{:0>64}", n);
+    db.insert_reset_token(id, &hash("good"), now, later)
+        .await
+        .unwrap();
+    db.insert_reset_token(
+        id,
+        &hash("expired"),
+        now - time::Duration::hours(2),
+        now - time::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    db.insert_reset_token(bob, &hash("unconfirmed"), now, later)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.confirm_password_reset(&hash("nope"), "$new", now)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.confirm_password_reset(&hash("expired"), "$new", now)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.confirm_password_reset(&hash("unconfirmed"), "$new", now)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db.find_user_by_id(bob)
+            .await
+            .unwrap()
+            .unwrap()
+            .password_hash,
+        "$argon2id$hash"
+    );
+
+    assert_eq!(
+        db.confirm_password_reset(&hash("good"), "$new", now)
+            .await
+            .unwrap(),
+        Some(id)
+    );
+    assert_eq!(
+        db.find_user_by_id(id).await.unwrap().unwrap().password_hash,
+        "$new"
+    );
+    assert_eq!(
+        count(
+            &db,
+            &format!("SELECT count(*) FROM sessions WHERE user_id = '{id}'")
+        )
+        .await,
+        0
+    );
+    // One use only.
+    assert_eq!(
+        db.confirm_password_reset(&hash("good"), "$again", now)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_newer_reset_link_invalidates_older_ones_only() {
+    let (db, _container) = database().await;
+    let id = verified_user(&db, "ala@example.com", "Ala", "ala").await;
+    let now = OffsetDateTime::now_utc();
+    let later = now + time::Duration::hours(1);
+    let hash = |n: &str| format!("{:0>64}", n);
+    let old = db
+        .insert_reset_token(id, &hash("old"), now - time::Duration::minutes(5), later)
+        .await
+        .unwrap();
+    let new = db
+        .insert_reset_token(id, &hash("new"), now, later)
+        .await
+        .unwrap();
+    let newest = db
+        .insert_reset_token(id, &hash("newest"), now + time::Duration::seconds(1), later)
+        .await
+        .unwrap();
+    db.invalidate_older_reset_tokens(id, now, new.id, now)
+        .await
+        .unwrap();
+    let used: Vec<String> = {
+        use sqlx::Row;
+        sqlx::query("SELECT token_hash FROM password_reset_tokens WHERE used_at IS NOT NULL")
+            .fetch_all(db.pool())
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get::<String, _>(0))
+            .collect()
+    };
+    assert_eq!(used, vec![hash("old")]);
+    // A link that was never delivered can be removed.
+    db.delete_reset_token(newest.id).await.unwrap();
+    db.delete_reset_token(old.id).await.unwrap();
+    assert_eq!(
+        count(&db, "SELECT count(*) FROM password_reset_tokens").await,
+        1
+    );
+}

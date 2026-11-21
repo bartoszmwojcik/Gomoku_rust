@@ -9,4 +9,19 @@
   <dd><span data-testid="account-email">{{ email }}</span>
     <span data-testid="account-verified">{% if verified %}{{ ctx.tr.t("account.verified") }}{% else %}{{ ctx.tr.t("account.unverified") }}{% endif %}</span></dd>
 </dl>
+<h2>{{ ctx.tr.t("account.password.title") }}</h2>
+<form data-api="/api/auth/password" data-success="#password-changed" data-testid="password-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label>{{ ctx.tr.t("account.password.current") }}
+    <input type="password" name="currentPassword" required autocomplete="current-password" data-testid="current-password">
+  </label>
+  <p data-error-for="currentPassword" role="alert"></p>
+  <label>{{ ctx.tr.t("account.password.new") }}
+    <input type="password" name="newPassword" required autocomplete="new-password" minlength="8" data-testid="new-password">
+  </label>
+  <small>{{ ctx.tr.t("register.passwordHint") }}</small>
+  <p data-error-for="newPassword" role="alert"></p>
+  <button type="submit" data-testid="submit">{{ ctx.tr.t("account.password.submit") }}</button>
+</form>
+<p id="password-changed" hidden role="status" data-testid="password-changed">{{ ctx.tr.t("account.password.done") }}</p>
 {% endblock %}

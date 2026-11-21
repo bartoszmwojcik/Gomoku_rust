@@ -11,10 +11,11 @@ use tower_http::trace::TraceLayer;
 use crate::api::csrf;
 use crate::clock::Clock;
 use crate::config::AppConfig;
+use crate::email::EmailSender;
 use crate::health::{HealthProbe, health};
 use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
-use crate::{pages, routes_auth};
+use crate::{pages, routes_auth, routes_password};
 
 /// Shared application state: explicit composition instead of a DI container.
 #[derive(Clone)]
@@ -25,6 +26,9 @@ pub struct AppState {
     pub clock: Clock,
     pub hasher: PasswordHasher,
     pub catalogs: Arc<Catalogs>,
+    pub email: Arc<dyn EmailSender>,
+    /// Work that runs after the response (e.g. sending a reset link); awaited on shutdown and in tests.
+    pub tasks: tokio_util::task::TaskTracker,
 }
 
 pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
@@ -32,12 +36,23 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route("/auth/register", post(routes_auth::register))
         .route("/auth/login", post(routes_auth::login))
         .route("/auth/logout", post(routes_auth::logout))
+        .route("/auth/password", post(routes_password::change))
+        .route(
+            "/auth/password-reset/request",
+            post(routes_password::reset_request),
+        )
+        .route(
+            "/auth/password-reset/confirm",
+            post(routes_password::reset_confirm),
+        )
         .layer(from_fn_with_state(state.clone(), csrf));
     Router::new()
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
         .route("/register", get(pages::register))
         .route("/account", get(pages::account))
+        .route("/forgot-password", get(pages::forgot_password))
+        .route("/reset-password", get(pages::reset_password))
         .route("/spike/board", get(pages::board))
         .route("/spike/clock", get(pages::clock))
         .route("/api/health", get(health))
