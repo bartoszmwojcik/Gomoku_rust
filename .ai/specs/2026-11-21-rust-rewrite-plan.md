@@ -177,3 +177,16 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
   administrator z `ADMIN_EMAIL`.
 - Nie zrobione: automatyczne scenariusze przeglądarkowe w `tests/integration` (harness `agent-browser`); ścieżkę sprawdziłem ręcznie w przeglądarce
   (rejestracja z błędem pola, rejestracja, wylogowanie, logowanie ze złym i dobrym hasłem, przełączenie na FR).
+
+### F2b (2026-11-21) — w PR `feat/f2b-passwords`
+
+- Zrobione: zmiana hasła (`POST /api/auth/password`: limit 10 błędnych prób / 15 min na konto, reszta sesji kończona, unieważnienie linków resetu,
+  warunkowy `UPDATE` przeciw wyścigowi), reset hasła (`/password-reset/request` zawsze `200`, praca po odpowiedzi w `TaskTracker`; limity: 10/h
+  na adres klienta, 3/h na e-mail, dzienna pula `email-daily:reset`; `/password-reset/confirm` jednorazowy token 1 h, tylko potwierdzony e-mail,
+  kończy wszystkie sesje), tabela `password_reset_tokens` (migracja 0003), strony `/forgot-password`, `/reset-password` (`Referrer-Policy:
+  no-referrer`) i formularz zmiany hasła na `/account`, teksty PL/EN/FR.
+- Warstwa poczty (potrzebna resetowi, użyje jej F2c): port `EmailSender`, transporty `file` / `brevo` (reqwest + rustls, bez przekierowań, kody błędów
+  bez klucza i adresu) / brak, fabryka z degradacją, szablon e-maila (PL), `Secret` w konfiguracji.
+- Znalezione testami: `tokio::fs::File` bez `flush()` gubi dane przy zamknięciu (transport plikowy).
+- Odstępstwa: link w e-mailu bez `APP_ORIGIN` wskazuje `http://localhost:3000` (jak w Node), więc lokalnie ustaw `APP_ORIGIN`.
+- Zostaje na F2c: potwierdzenie e-maila (pula 70% dziennego limitu), zmiana e-maila i nazwy; F2d: usunięcie konta, sprzątanie, administrator.

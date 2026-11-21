@@ -14,5 +14,6 @@
   <p data-error-for="password" role="alert"></p>
   <button type="submit" data-testid="submit">{{ ctx.tr.t("login.submit") }}</button>
 </form>
+<p><a href="/forgot-password" data-testid="forgot-link">{{ ctx.tr.t("login.forgot") }}</a></p>
 <p>{{ ctx.tr.t("login.noAccount") }} <a href="/register?next={{ next|urlencode }}">{{ ctx.tr.t("login.registerLink") }}</a></p>
 {% endblock %}

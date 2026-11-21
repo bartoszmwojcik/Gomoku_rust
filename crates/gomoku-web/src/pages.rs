@@ -64,6 +64,19 @@ struct AccountPage {
 }
 
 #[derive(Template)]
+#[template(path = "forgot_password.html")]
+struct ForgotPasswordPage {
+    ctx: Ctx,
+}
+
+#[derive(Template)]
+#[template(path = "reset_password.html")]
+struct ResetPasswordPage {
+    ctx: Ctx,
+    token: String,
+}
+
+#[derive(Template)]
 #[template(path = "board.html")]
 struct BoardPage {
     ctx: Ctx,
@@ -160,6 +173,42 @@ pub async fn account(
         ctx: Ctx::new(state.catalogs.translator(locale), Some(user), "/account"),
     };
     render(&page)
+}
+
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    Lang(locale): Lang,
+    jar: CookieJar,
+) -> Response {
+    let user = current_user(&state, &jar).await;
+    render(&ForgotPasswordPage {
+        ctx: Ctx::new(state.catalogs.translator(locale), user, "/forgot-password"),
+    })
+}
+
+#[derive(Deserialize, Default)]
+pub struct TokenQuery {
+    token: Option<String>,
+}
+
+/// The link from the e-mail. The token is in the address, so the page must not leak it through `Referer`.
+pub async fn reset_password(
+    State(state): State<AppState>,
+    Lang(locale): Lang,
+    jar: CookieJar,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    let user = current_user(&state, &jar).await;
+    let page = ResetPasswordPage {
+        ctx: Ctx::new(state.catalogs.translator(locale), user, "/reset-password"),
+        token: query.token.unwrap_or_default(),
+    };
+    let mut response = render(&page);
+    response.headers_mut().insert(
+        axum::http::header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
+    response
 }
 
 pub async fn board(State(state): State<AppState>, Lang(locale): Lang, jar: CookieJar) -> Response {

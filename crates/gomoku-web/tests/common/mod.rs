@@ -10,6 +10,7 @@ use axum::http::{Request, StatusCode, header};
 use gomoku_db::{Database, DbConfig, OffsetDateTime};
 use gomoku_web::app::{AppState, build_router};
 use gomoku_web::config::{AppConfig, PasswordParams};
+use gomoku_web::email::{EmailError, EmailMessage, EmailSender};
 use gomoku_web::health::HealthProbe;
 use gomoku_web::i18n::Catalogs;
 use gomoku_web::password::PasswordHasher;
@@ -53,8 +54,32 @@ impl HealthProbe for FakeProbe {
     }
 }
 
+/// Collects the messages instead of sending them; can be told to fail.
+#[derive(Default)]
+pub struct MailBox {
+    pub sent: Mutex<Vec<EmailMessage>>,
+    pub fail_with: Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl EmailSender for MailBox {
+    async fn send(
+        &self,
+        message: &EmailMessage,
+        _timeout: std::time::Duration,
+    ) -> Result<(), EmailError> {
+        if let Some(code) = self.fail_with.lock().unwrap().clone() {
+            return Err(EmailError { code });
+        }
+        self.sent.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+}
+
 pub struct TestApp {
     pub router: Router,
+    pub mail: Arc<MailBox>,
+    pub tasks: tokio_util::task::TaskTracker,
     pub db: Database,
     pub clock: Arc<Mutex<OffsetDateTime>>,
 }
@@ -80,12 +105,15 @@ fn state_for(
     db: Database,
     config: AppConfig,
     probe: Result<(), String>,
-) -> (AppState, Arc<Mutex<OffsetDateTime>>) {
+) -> (AppState, Arc<Mutex<OffsetDateTime>>, Arc<MailBox>) {
     let clock = Arc::new(Mutex::new(
         OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap(),
     ));
     let clock_for_state = Arc::clone(&clock);
+    let mail = Arc::new(MailBox::default());
     let state = AppState {
+        email: mail.clone(),
+        tasks: tokio_util::task::TaskTracker::new(),
         hasher: PasswordHasher::new(config.password).unwrap(),
         health: Arc::new(FakeProbe(probe)),
         db,
@@ -93,7 +121,7 @@ fn state_for(
         catalogs: Catalogs::embedded().unwrap(),
         config: Arc::new(config),
     };
-    (state, clock)
+    (state, clock, mail)
 }
 
 impl TestApp {
@@ -121,11 +149,14 @@ impl TestApp {
         .unwrap();
         db.migrate().await.unwrap();
         let config = fast_config(overrides);
-        let (state, clock) = state_for(db.clone(), config.clone(), Ok(()));
+        let (state, clock, mail) = state_for(db.clone(), config.clone(), Ok(()));
+        let tasks = state.tasks.clone();
         Self {
             router: build_router(state, &config.assets_dir),
             db,
             clock,
+            mail,
+            tasks,
         }
     }
 
@@ -137,12 +168,26 @@ impl TestApp {
         })
         .unwrap();
         let config = fast_config(&[]);
-        let (state, clock) = state_for(db.clone(), config.clone(), probe);
+        let (state, clock, mail) = state_for(db.clone(), config.clone(), probe);
+        let tasks = state.tasks.clone();
         Self {
             router: build_router(state, &config.assets_dir),
             db,
             clock,
+            mail,
+            tasks,
         }
+    }
+
+    /// Waits for the work that runs after a response (a reset e-mail being sent).
+    pub async fn settle(&self) {
+        self.tasks.close();
+        self.tasks.wait().await;
+        self.tasks.reopen();
+    }
+
+    pub fn messages(&self) -> Vec<EmailMessage> {
+        self.mail.sent.lock().unwrap().clone()
     }
 
     pub fn advance_seconds(&self, seconds: i64) {

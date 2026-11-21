@@ -42,6 +42,15 @@
       });
       const result = await response.json().catch(() => null);
       if (response.ok && result?.ok) {
+        if (form.dataset.success) {
+          // Stay on the page: show the confirmation, clear the fields (and hide the form when asked to).
+          form.reset();
+          form.querySelectorAll("[data-error-for], [data-form-error]").forEach((el) => { el.textContent = ""; });
+          const done = document.querySelector(form.dataset.success);
+          if (done) done.hidden = false;
+          if (form.hasAttribute("data-hide-on-success")) form.hidden = true;
+          return;
+        }
         window.location.assign(form.dataset.redirect || "/");
         return;
       }

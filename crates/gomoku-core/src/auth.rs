@@ -33,6 +33,11 @@ pub enum FieldIssue {
     PasswordTooLong,
     /// A login password over the size guard (not a password rule: logging in reveals none).
     LoginPasswordTooLong,
+    CurrentPasswordRequired,
+    /// The new password equals the current one.
+    PasswordUnchanged,
+    TokenRequired,
+    TokenTooLong,
 }
 
 impl FieldIssue {
@@ -50,6 +55,10 @@ impl FieldIssue {
             FieldIssue::PasswordRequired => "PASSWORD_REQUIRED",
             FieldIssue::PasswordTooShort => "PASSWORD_TOO_SHORT",
             FieldIssue::PasswordTooLong | FieldIssue::LoginPasswordTooLong => "PASSWORD_TOO_LONG",
+            FieldIssue::CurrentPasswordRequired => "CURRENT_PASSWORD_REQUIRED",
+            FieldIssue::PasswordUnchanged => "PASSWORD_UNCHANGED",
+            FieldIssue::TokenRequired => "TOKEN_REQUIRED",
+            FieldIssue::TokenTooLong => "TOKEN_TOO_LONG",
         }
     }
 }
@@ -128,6 +137,53 @@ pub fn validate_login_password(input: &str) -> Result<(), Vec<FieldIssue>> {
     }
     if input.chars().count() > LOGIN_PASSWORD_MAX_LENGTH {
         return Err(vec![FieldIssue::LoginPasswordTooLong]);
+    }
+    Ok(())
+}
+
+/// The current password of a change request: no registration rules, only presence and size.
+pub fn validate_current_password(input: &str) -> Result<(), Vec<FieldIssue>> {
+    if input.is_empty() {
+        return Err(vec![FieldIssue::CurrentPasswordRequired]);
+    }
+    validate_login_password(input)
+}
+
+/// Rules for a change request: the new password follows the registration rules and must differ from the current one.
+pub fn validate_password_change(current: &str, new: &str) -> Result<(), PasswordChangeIssues> {
+    let current_issues = validate_current_password(current).err().unwrap_or_default();
+    let mut new_issues = validate_new_password(new).err().unwrap_or_default();
+    if new_issues.is_empty() && new == current {
+        new_issues.push(FieldIssue::PasswordUnchanged);
+    }
+    if current_issues.is_empty() && new_issues.is_empty() {
+        Ok(())
+    } else {
+        Err(PasswordChangeIssues {
+            current: current_issues,
+            new: new_issues,
+        })
+    }
+}
+
+/// Issues per field of a rejected password change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordChangeIssues {
+    pub current: Vec<FieldIssue>,
+    pub new: Vec<FieldIssue>,
+}
+
+/// The token is 43 base64url characters; the bound only guards against huge input.
+pub const RESET_TOKEN_MAX_LENGTH: usize = 512;
+
+/// A one-time token from a link: only presence and size are checked, so an unknown or malformed token is just
+/// "invalid" (no oracle for the format).
+pub fn validate_link_token(input: &str) -> Result<(), Vec<FieldIssue>> {
+    if input.is_empty() {
+        return Err(vec![FieldIssue::TokenRequired]);
+    }
+    if input.chars().count() > RESET_TOKEN_MAX_LENGTH {
+        return Err(vec![FieldIssue::TokenTooLong]);
     }
     Ok(())
 }
@@ -274,6 +330,60 @@ mod tests {
     }
 
     #[test]
+    fn current_password_needs_presence_and_size_only() {
+        assert_eq!(validate_current_password("x"), Ok(()));
+        assert_eq!(
+            validate_current_password(""),
+            Err(vec![FieldIssue::CurrentPasswordRequired])
+        );
+        assert_eq!(
+            validate_current_password(&"a".repeat(1025)),
+            Err(vec![FieldIssue::LoginPasswordTooLong])
+        );
+    }
+
+    #[test]
+    fn a_password_change_needs_a_valid_and_different_new_password() {
+        assert_eq!(
+            validate_password_change("old password", "new password"),
+            Ok(())
+        );
+        assert_eq!(
+            validate_password_change("", "short"),
+            Err(PasswordChangeIssues {
+                current: vec![FieldIssue::CurrentPasswordRequired],
+                new: vec![FieldIssue::PasswordTooShort]
+            })
+        );
+        assert_eq!(
+            validate_password_change("same password", "same password"),
+            Err(PasswordChangeIssues {
+                current: vec![],
+                new: vec![FieldIssue::PasswordUnchanged]
+            })
+        );
+        // An unchanged password that is also too short reports the shortness only.
+        assert_eq!(
+            validate_password_change("short", "short").unwrap_err().new,
+            vec![FieldIssue::PasswordTooShort]
+        );
+    }
+
+    #[test]
+    fn link_tokens_need_presence_and_size_only() {
+        assert_eq!(validate_link_token("abc"), Ok(()));
+        assert_eq!(validate_link_token(&"a".repeat(512)), Ok(()));
+        assert_eq!(
+            validate_link_token(""),
+            Err(vec![FieldIssue::TokenRequired])
+        );
+        assert_eq!(
+            validate_link_token(&"a".repeat(513)),
+            Err(vec![FieldIssue::TokenTooLong])
+        );
+    }
+
+    #[test]
     fn issue_codes_are_stable() {
         let all = [
             (FieldIssue::EmailRequired, "EMAIL_REQUIRED"),
@@ -288,6 +398,13 @@ mod tests {
             (FieldIssue::PasswordTooShort, "PASSWORD_TOO_SHORT"),
             (FieldIssue::PasswordTooLong, "PASSWORD_TOO_LONG"),
             (FieldIssue::LoginPasswordTooLong, "PASSWORD_TOO_LONG"),
+            (
+                FieldIssue::CurrentPasswordRequired,
+                "CURRENT_PASSWORD_REQUIRED",
+            ),
+            (FieldIssue::PasswordUnchanged, "PASSWORD_UNCHANGED"),
+            (FieldIssue::TokenRequired, "TOKEN_REQUIRED"),
+            (FieldIssue::TokenTooLong, "TOKEN_TOO_LONG"),
         ];
         for (issue, code) in all {
             assert_eq!(issue.code(), code);
