@@ -1,0 +1,6 @@
+body { margin: 0; font-family: var(--font-family-base); background: var(--surface-page); color: var(--text-primary); }
+main { max-width: var(--layout-width-board); margin: 0 auto; padding: 1rem; }
+.board { display: grid; grid-template-columns: repeat(15, 1fr); background: var(--board-surface); padding: var(--board-padding); }
+.cell { aspect-ratio: 1; border: var(--board-line-width) solid var(--board-line); background: transparent; padding: 0; }
+.cell[data-stone="black"] { background: var(--palette-stone-900); border-radius: 50%; }
+.cell[data-stone="white"] { background: var(--palette-stone-50); border-radius: 50%; }

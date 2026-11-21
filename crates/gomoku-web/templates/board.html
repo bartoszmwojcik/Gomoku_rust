@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+{% block title %}Plansza · Gomoku{% endblock %}
+{% block head %}<script src="/assets/board.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Plansza</h1>
+<p>Czas: <span id="clock" data-testid="clock" hx-get="/spike/clock" hx-trigger="load, every 1s" hx-swap="innerHTML"></span></p>
+<div class="board" data-testid="board" role="grid" aria-label="Plansza 15×15">
+  {% for r in rows %}{% for c in cols %}<button type="button" class="cell" role="gridcell" data-row="{{ r }}" data-col="{{ c }}" data-testid="cell-{{ r }}-{{ c }}" aria-label="Pole {{ r }}, {{ c }}"></button>{% endfor %}{% endfor %}
+</div>
+{% endblock %}

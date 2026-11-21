@@ -1,0 +1,18 @@
+# Local PostgreSQL for development: `docker compose up -d`.
+# The project name is pinned so worktrees and clones share one container and volume.
+name: gomoku_rust
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: gomoku
+      POSTGRES_PASSWORD: gomoku
+      POSTGRES_DB: gomoku
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
