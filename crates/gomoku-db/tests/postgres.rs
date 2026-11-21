@@ -48,12 +48,17 @@ async fn the_cli_applies_migrations() {
     let port = container.get_host_port_ipv4(5432).await.expect("port");
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let db = Database::connect_lazy(&DbConfig { url, pool_max: 2 }).expect("pool");
-    let message = gomoku_db::cli::run(&["migrate".to_owned()], &db)
-        .await
-        .expect("migrate");
-    assert_eq!(message, "migrations applied");
+    let now = gomoku_db::OffsetDateTime::now_utc();
+    let report = gomoku_db::cli::run(&["migrate".to_owned()], &db, &|_| None, now).await;
+    assert_eq!(
+        (report.code, report.stdout.as_str()),
+        (0, "migrations applied")
+    );
     sqlx::query("SELECT count(*) FROM users")
         .execute(db.pool())
         .await
         .expect("users table exists");
+    let swept = gomoku_db::cli::run(&["cleanup".to_owned()], &db, &|_| None, now).await;
+    assert_eq!(swept.code, 0, "{}", swept.stderr);
+    assert!(swept.stdout.contains("\"truncated\":false") && swept.stderr.is_empty());
 }

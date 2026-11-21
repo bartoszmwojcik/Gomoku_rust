@@ -29,7 +29,7 @@
     event.preventDefault();
     const submit = form.querySelector('button[type="submit"]');
     const body = {};
-    for (const el of form.elements) if (el.name) body[el.name] = el.value;
+    for (const el of form.elements) if (el.name) body[el.name] = el.type === "checkbox" ? el.checked : el.value;
     if (submit) submit.disabled = true;
     const slot = form.querySelector("[data-form-error]");
     if (slot) slot.textContent = texts.sending ?? "";
