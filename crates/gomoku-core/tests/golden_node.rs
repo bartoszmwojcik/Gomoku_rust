@@ -1,4 +1,5 @@
 //! Parity with the Node.js reference: outcomes recorded in `golden/node.json` by `golden/generate.ts`.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use gomoku_core::apply_move::{MoveState, apply_move};
 use gomoku_core::invitation_code::extract_invitation_code;
