@@ -202,3 +202,16 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - `ADMIN_EMAIL` (opcjonalny do F8): nikt nie rejestruje się na tym adresie, adres administratora nie zmienia się i nie można na niego zmienić cudzego.
 - Odstępstwo: limity prób liczy czas bazy (`now()`), nie zegar aplikacji; testy rozdzielają adresy klientów (`TRUST_PROXY_HOPS=1` + `X-Forwarded-For`).
 - Zostaje na F2d: usunięcie konta z anonimizacją (wymaga gier z F3 do pełnej reguły „partia w toku”), sprzątanie wygasłych rekordów, konto administratora (CLI).
+
+### F2d (2026-11-21) — w PR `feat/f2d-account-lifecycle` (kończy F2)
+
+- Zrobione: usunięcie konta (`POST /api/account/delete`: hasło + jawne potwierdzenie, limit 10 błędnych prób / 15 min na konto — błędne hasło zostaje
+  policzone, reszta wyników oddaje próbę, sukces zeruje licznik; administrator chroniony `403 ADMIN_ACCOUNT_PROTECTED` przed sprawdzeniem hasła; jedna
+  transakcja z blokadą wiersza i warunkiem na zweryfikowany hash; ciasteczko kasowane po sukcesie i gdy konto już zniknęło), sekcja na `/account`,
+  `gomoku-db cleanup` (reguły: sesje po 1 h, liczniki po 48 h, linki po 24 h, niepotwierdzone konta po 14 dniach, z pominięciem konta `ADMIN_EMAIL`;
+  paczki po 1000 z `FOR UPDATE SKIP LOCKED`, budżet 15 s na regułę, błąd jednej reguły nie zatrzymuje reszty, test strażnik: każda tabela z kolumną
+  wygaśnięcia ma regułę), `gomoku-admin create` (tworzy lub przejmuje konto administratora: hasło tylko z terminala lub jednej linii stdin, `--name`, `--yes`).
+- Świadomie odłożone do F3 (wymaga gier): reguła „partia w toku blokuje usunięcie”, anonimizacja partii zakończonych („Usunięty gracz”), usuwanie
+  oczekujących partii i czatu przy usunięciu konta, reguły sprzątania gier/czatu/gości, warunek „bez żadnej partii” dla niepotwierdzonych kont.
+- Odstępstwo: `ADMIN_EMAIL` pozostaje opcjonalny (w Node wymagany w produkcji); zrobimy go wymaganym razem z panelem administratora (F8).
+- **F2 zamknięte:** konta, sesje, hasła, e-maile, nazwa, usunięcie, sprzątanie, administrator, i18n (fundament).

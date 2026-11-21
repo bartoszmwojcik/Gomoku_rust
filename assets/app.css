@@ -15,3 +15,4 @@ button { min-height: 2.75rem; min-width: 2.75rem; }
 small { color: var(--text-muted); }
 [hidden] { display: none !important; }
 .banner { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; padding: 0.75rem 1rem; background: var(--surface-raised); border-bottom: 1px solid var(--board-line); }
+button.danger { background: var(--action-danger-bg); color: var(--action-danger-text); }

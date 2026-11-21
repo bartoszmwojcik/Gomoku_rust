@@ -17,6 +17,7 @@ gomoku-core = { version = "0.1.0", path = "../gomoku-core" }
 gomoku-db = { version = "0.1.0", path = "../gomoku-db" }
 rand = "0.10.4"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }
+rpassword = "7.5.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"

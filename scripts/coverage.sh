@@ -13,7 +13,7 @@ for t in "${targets[@]}"; do
   case "$t" in
     core) cargo llvm-cov -p gomoku-core --fail-under-lines 100 --fail-under-functions 100 ;;
     db)   cargo llvm-cov -p gomoku-db --ignore-filename-regex 'src/bin/' --fail-under-lines 85 ;;
-    web)  cargo llvm-cov -p gomoku-web --ignore-filename-regex 'main\.rs' --fail-under-lines 85 ;;
+    web)  cargo llvm-cov -p gomoku-web --ignore-filename-regex '(main\.rs|src/bin/)' --fail-under-lines 85 ;;
     *) echo "unknown target: $t" >&2; exit 2 ;;
   esac
 done

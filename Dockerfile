@@ -11,7 +11,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 gomoku
 WORKDIR /app
-COPY --from=build /src/target/release/gomoku-web /src/target/release/gomoku-db /app/
+COPY --from=build /src/target/release/gomoku-web /src/target/release/gomoku-db /src/target/release/gomoku-admin /app/
 COPY assets /app/assets
 ENV BIND_ADDR=0.0.0.0:3000 ASSETS_DIR=/app/assets
 USER gomoku

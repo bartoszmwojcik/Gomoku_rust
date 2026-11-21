@@ -44,6 +44,23 @@
 <p id="email-requested" hidden role="status" data-testid="email-requested">{{ ctx.tr.t("account.email.requested") }}</p>
 {% endif %}
 
+<h2>{{ ctx.tr.t("account.delete.title") }}</h2>
+{% if email_locked %}
+<p data-testid="delete-locked">{{ ctx.tr.t("account.delete.locked") }}</p>
+{% else %}
+<p>{{ ctx.tr.t("account.delete.warning") }}</p>
+<form data-api="/api/account/delete" data-redirect="/" data-testid="delete-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  <label><input type="checkbox" name="confirm" data-testid="delete-confirm"> {{ ctx.tr.t("account.delete.confirm") }}</label>
+  <p data-error-for="confirm" role="alert"></p>
+  <label>{{ ctx.tr.t("account.password.current") }}
+    <input type="password" name="password" required autocomplete="current-password" data-testid="delete-password">
+  </label>
+  <p data-error-for="password" role="alert"></p>
+  <button type="submit" class="danger" data-testid="submit">{{ ctx.tr.t("account.delete.submit") }}</button>
+</form>
+{% endif %}
+
 <h2>{{ ctx.tr.t("account.password.title") }}</h2>
 <form data-api="/api/auth/password" data-success="#password-changed" data-testid="password-form" novalidate>
   <p data-form-error role="alert" data-testid="form-error"></p>

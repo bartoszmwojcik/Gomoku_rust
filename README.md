@@ -24,7 +24,9 @@ cargo run -p gomoku-web                                          # http://localh
 | `cargo test --workspace` | testy (db wymaga Dockera) |
 | `scripts/coverage.sh [core db web]` | bramki pokrycia |
 | `cargo run -p gomoku-db -- migrate` | migracje (aplikacja sama ich nie uruchamia) |
-| `docker build -t gomoku-rust .` | obraz produkcyjny (zawiera `gomoku-web` i `gomoku-db`) |
+| `cargo run -p gomoku-db -- cleanup` | sprzątanie wygasłych rekordów (cron co godzinę; na bazie dev kasuje dane, sprawdź `DATABASE_URL`) |
+| `cargo run -p gomoku-web --bin gomoku-admin -- create [--name N] [--yes]` | tworzy lub przejmuje konto administratora z `ADMIN_EMAIL` (hasło z terminala lub jednej linii stdin) |
+| `docker build -t gomoku-rust .` | obraz produkcyjny (zawiera `gomoku-web`, `gomoku-db` i `gomoku-admin`) |
 
 ## Struktura
 

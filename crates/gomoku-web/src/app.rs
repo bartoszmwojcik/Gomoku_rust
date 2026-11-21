@@ -15,7 +15,7 @@ use crate::email::EmailSender;
 use crate::health::{HealthProbe, health};
 use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
-use crate::{pages, routes_auth, routes_email, routes_password};
+use crate::{pages, routes_account, routes_auth, routes_email, routes_password};
 
 /// Shared application state: explicit composition instead of a DI container.
 #[derive(Clone)]
@@ -65,6 +65,7 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
             "/auth/display-name",
             patch(routes_email::change_display_name),
         )
+        .route("/account/delete", post(routes_account::delete))
         .layer(from_fn_with_state(state.clone(), csrf));
     Router::new()
         .route("/", get(pages::home))
