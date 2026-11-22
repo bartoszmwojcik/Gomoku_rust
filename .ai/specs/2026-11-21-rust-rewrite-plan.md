@@ -223,3 +223,18 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Web: `/api/games*`, `/api/invitations/{code}/accept`, `/api/lobby*`, `/api/history`; strony `/play /join /invite/{code} /games/{id} /games/{id}/review /lobby /history`; skrypty `game-room.js`, `lobby.js`, `history.js`, `review.js`.
 - Weryfikacja: testy HTTP/DB (w tym wyścigi), `pages_games.rs`, ręcznie w przeglądarce (dwie sesje: zaproszenie, partia do pięciu, rewanż, poddanie, lobby, historia, przegląd, gość). Pokrycie: core 100%, db 96%, web 96% (`scripts/coverage.sh`).
 - Nie sprawdzono: dotyk (wybór i potwierdzenie ruchu) i widok mobilny w prawdziwej przeglądarce; scenariusz integracyjny agent-browser nie jest jeszcze zautomatyzowany.
+
+### F4 — Czat, partie publiczne, widzowie, QR (zrobione, jeden PR)
+
+- Kontrakt: `.ai/docs/2026-11-22-f4-contract.md` (wyciągnięty z implementacji w Node).
+- Rdzeń: `gomoku-core::chat` (normalizacja wiadomości NFKC, odrzucanie adresów, stan czatu, odstęp), cookie widza.
+- Baza (migracja 0006): `games.is_public` / `audience_closed_at`, `game_players.chat_enabled`, `game_spectators`, `chat_messages`; czat na zegarze bazy
+  z blokadą doradczą na grę (numeracja `seq` bez dziur); widzowie: limit 20, obecność 15 s, dostęp 1 h; wyłącznik publiczności; kod QR (SVG w aplikacji).
+  Sprzątanie: 15 reguł (`chatMessages`, `gameSpectators` przed regułami gier); usunięcie konta kasuje rozmowy jego partii.
+- Web: `/api/games/{id}/chat*`, `/spectate*`, `/audience/close`, `/qr`, `/api/invitations/{code}/spectate`; strony: pokój widza, ekran „publiczność zamknięta”, przegląd po kodzie
+  (`/games/{id}/review?code=`), widok `watch` zaproszenia; skrypty `chat.js`, `spectator-room.js`.
+- Odstępstwa: czat widza nie przedłuża dostępu (tak jak w Node: tylko odczyt stanu); klient nie powtarza po stronie przeglądarki wszystkich reguł normalizacji
+  (adresy, znaki niewidoczne sprawdza serwer, klient liczy długość i pusty tekst); nowy klucz `chat.spectatorLabel` zamiast zaszytego „Widz ·”.
+- Weryfikacja: 25 testów HTTP/DB (w tym wyścigi), ręcznie w przeglądarce (publiczna partia, czat gracz–gracz–widz, przełącznik, wyłącznik publiczności, QR).
+  Pokrycie: core 100%, db 96%, web 96%.
+- Nie sprawdzono: dotyk/mobile, czytnik ekranu (live regions czatu), zachowanie przy bardzo dużej liczbie wiadomości w przeglądarce.

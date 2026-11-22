@@ -238,6 +238,8 @@ async fn resending_needs_a_session_an_unconfirmed_address_and_respects_the_limit
         .await;
     assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.header("retry-after").is_some());
+    // The e-mails go out in the background: wait for them (a loaded machine may be late).
+    app.settle().await;
     assert_eq!(
         mails(&app, VERIFY_SUBJECT).len(),
         4,

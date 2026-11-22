@@ -132,7 +132,20 @@
     return { kind: won ? "win" : "loss", title: titles[won ? 0 : 1], detail };
   };
 
+  /** The banner for a reader who did not play (a spectator, a review by code): never "you won". */
+  const neutralOutcomeOf = (result, blackSeat, players) => {
+    if (result.reason === "draw") return { kind: "draw", title: gt("game.outcome.draw"), detail: gt("game.outcome.neutral.draw") };
+    const winner = players.find((p) => p.seat === result.winnerSeat);
+    const colour = result.winnerSeat === blackSeat ? "black" : "white";
+    return {
+      kind: "neutral",
+      title: gt("game.outcome.neutral.win", { wins: gt(`game.sides.classic.wins.${colour}`), name: winner ? playerLabelOf(winner) : "", score: "" }),
+      detail: gt(`game.outcome.neutral.${result.reason}`),
+    };
+  };
+
   /** A player's label: "Ty (Ala)", "Gracz 2 (gość)", "Usunięty gracz". */
+  const playerLabelOf = (player) => playerLabel(player, null);
   const playerLabel = (player, mySeat) => {
     const mine = player.seat === mySeat;
     if (player.kind === "account") {
@@ -149,5 +162,5 @@
   const formatDate = (iso) =>
     new Intl.DateTimeFormat(window.GT.lang, { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Warsaw" }).format(new Date(iso));
 
-  window.Gomoku = { api, h, formatClock, cellName, cellParts, stonesOf, createBoard, outcomeOf, playerLabel, formatDate, SIZE };
+  window.Gomoku = { api, h, formatClock, cellName, cellParts, stonesOf, createBoard, outcomeOf, neutralOutcomeOf, playerLabel, formatDate, SIZE };
 })();

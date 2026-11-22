@@ -29,6 +29,15 @@ pub fn guest_cookie_name(secure: bool) -> &'static str {
     }
 }
 
+/// Name of the spectator cookie: a visitor's access to a public game, never interchangeable with the guest cookie.
+pub fn spectator_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        "__Host-gomoku_spectator"
+    } else {
+        "gomoku_spectator"
+    }
+}
+
 /// `Max-Age` of the guest cookie: for a waiting game with an invitation it lasts until the invitation expires plus the
 /// token grace (the creator must see "invitation expired" instead of nothing); every other case is two hours.
 pub fn guest_cookie_max_age(waiting_invitation_expires_ms: Option<i64>, now_ms: i64) -> i64 {
@@ -241,6 +250,8 @@ mod tests {
     fn guest_cookie_names_and_lifetimes() {
         assert_eq!(guest_cookie_name(true), "__Host-gomoku_guest");
         assert_eq!(guest_cookie_name(false), "gomoku_guest");
+        assert_eq!(spectator_cookie_name(true), "__Host-gomoku_spectator");
+        assert_eq!(spectator_cookie_name(false), "gomoku_spectator");
         assert_eq!(guest_cookie_max_age(None, 5), 7200);
         // 24 h invitation + 1 h grace, 100 ms short of a whole second: rounded up.
         let now = 1_000;

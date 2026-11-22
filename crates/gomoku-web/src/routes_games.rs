@@ -96,7 +96,7 @@ fn invitation_json(created: &CreatedGame, origin: &str) -> Value {
     })
 }
 
-fn nickname_issue(error: NicknameError) -> FieldIssue {
+pub(crate) fn nickname_issue(error: NicknameError) -> FieldIssue {
     match error {
         NicknameError::TooLong { .. } => FieldIssue::NicknameTooLong,
         NicknameError::Invalid => FieldIssue::NicknameInvalid,
@@ -128,6 +128,19 @@ fn guest_fields(body: &Value) -> Result<Option<String>, ApiError> {
     }
 }
 
+/// `isPublic` of a create body: absent is private; anything but a boolean is refused.
+fn public_flag(body: &Value) -> Result<bool, ApiError> {
+    match body.get("isPublic") {
+        None => Ok(false),
+        Some(Value::Bool(flag)) => Ok(*flag),
+        Some(_) => Err(ApiError::validation("Nieprawidłowe dane.").with_field(
+            "isPublic",
+            "invalid_type",
+            "Nieprawidłowa wartość.",
+        )),
+    }
+}
+
 fn new_code() -> String {
     generate_invitation_code(random_int)
 }
@@ -144,7 +157,7 @@ pub async fn create_game(
     let now = (state.clock)();
     let secure = state.config.session_cookie_secure;
     if let Some(user) = current_user(&state, &jar).await {
-        read_optional_json(body, &headers).await?;
+        let is_public = public_flag(&read_optional_json(body, &headers).await?)?;
         rate_limit(
             &state,
             &format!("games-create:{}", user.id),
@@ -154,13 +167,20 @@ pub async fn create_game(
         .await?;
         let created = state
             .db
-            .create_game_account(user.id, now, INVITATION_TTL_MS as i64, &mut new_code)
+            .create_game_account(
+                user.id,
+                is_public,
+                now,
+                INVITATION_TTL_MS as i64,
+                &mut new_code,
+            )
             .await?;
         let data = json!({ "gameId": created.game_id, "invitation": invitation_json(&created, origin_of(&state)) });
         return Ok((jar, ok(StatusCode::CREATED, data)));
     }
     let body = read_json(body, &headers).await?;
     let nickname = guest_fields(&body)?;
+    let is_public = public_flag(&body)?;
     let key = crate::client_address::client_key(&headers, "games-create-guest", &state.config)
         .map_err(|_| {
             ApiError::internal_logged("client address", &"unavailable behind the proxy")
@@ -179,6 +199,7 @@ pub async fn create_game(
         token_hash: &hash,
         nickname: nickname.as_deref(),
         cancel_own_waiting_game: bool_field(&body, "cancelOwnWaitingGame") == Some(true),
+        is_public,
     };
     let created = state
         .db
@@ -191,7 +212,7 @@ pub async fn create_game(
 }
 
 /// `?after=N`: how many moves the client already knows; digits only, at most five.
-fn parse_after(query: &HashMap<String, String>) -> Result<usize, ApiError> {
+pub(crate) fn parse_after(query: &HashMap<String, String>) -> Result<usize, ApiError> {
     match query.get("after") {
         None => Ok(0),
         Some(raw) if (1..=5).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_digit()) => raw
@@ -214,7 +235,7 @@ fn cookie_max_age(snapshot: &Snapshot, now: OffsetDateTime) -> i64 {
     guest_cookie_max_age(waiting_until, to_ms(now))
 }
 
-fn view_response(
+pub(crate) fn view_response(
     state: &AppState,
     snapshot: &Snapshot,
     after: usize,
@@ -293,7 +314,11 @@ fn move_input(body: &Value) -> Result<MoveInput, ApiError> {
     })
 }
 
-fn refresh_guest(state: &AppState, jar: CookieJar, participant: &Participant) -> CookieJar {
+pub(crate) fn refresh_guest(
+    state: &AppState,
+    jar: CookieJar,
+    participant: &Participant,
+) -> CookieJar {
     if participant.user.is_some() || participant.guest_token.is_none() {
         return jar;
     }

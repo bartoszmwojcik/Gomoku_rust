@@ -27,6 +27,8 @@ pub struct GuestCreateInput<'a> {
     pub nickname: Option<&'a str>,
     /// The guest agreed to give up their own waiting game for the new one.
     pub cancel_own_waiting_game: bool,
+    /// Anybody with the code may watch the game once it is in progress.
+    pub is_public: bool,
 }
 
 /// Cancels a waiting game only while nobody has joined; zero rows means somebody joined first. The invitation is voided
@@ -80,9 +82,11 @@ async fn insert_waiting_game(
     code: String,
     expires_at: OffsetDateTime,
     now: OffsetDateTime,
+    is_public: bool,
 ) -> Result<CreatedGame, sqlx::Error> {
-    let game_id: Uuid = sqlx::query("INSERT INTO games (origin, status, created_at) VALUES ('invite', 'waiting', $1) RETURNING id")
+    let game_id: Uuid = sqlx::query("INSERT INTO games (origin, status, created_at, is_public) VALUES ('invite', 'waiting', $1, $2) RETURNING id")
         .bind(now)
+        .bind(is_public)
         .fetch_one(&mut *conn)
         .await?
         .try_get("id")?;
@@ -138,6 +142,7 @@ impl Database {
     pub async fn create_game_account(
         &self,
         user_id: Uuid,
+        is_public: bool,
         now: OffsetDateTime,
         invitation_ttl_ms: i64,
         new_code: &mut (dyn FnMut() -> String + Send),
@@ -163,6 +168,7 @@ impl Database {
             code,
             expires_at,
             now,
+            is_public,
         )
         .await;
         match created {
@@ -245,6 +251,7 @@ impl Database {
             code,
             expires_at,
             now,
+            input.is_public,
         )
         .await?;
         tx.commit().await?;

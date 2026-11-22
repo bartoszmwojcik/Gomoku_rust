@@ -91,6 +91,42 @@ impl From<GameError> for ApiError {
             GameError::CannotPickSelf => {
                 conflict("CANNOT_PICK_SELF", "Nie możesz zagrać sam ze sobą.")
             }
+            GameError::ChatUnavailable => conflict(
+                "CHAT_UNAVAILABLE",
+                "Czat jest teraz niedostępny w tej partii.",
+            ),
+            GameError::ChatDisabled => conflict("CHAT_DISABLED", "Czat jest wyłączony."),
+            GameError::ChatFull => conflict(
+                "CHAT_FULL",
+                "W tej partii jest już maksymalna liczba wiadomości.",
+            ),
+            GameError::ChatInterval { retry_after_ms } => ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                "Poczekaj chwilę przed następną wiadomością.",
+            )
+            .with_data(json!({ "retryAfterMs": retry_after_ms, "reason": "chat_interval" }))
+            .with_retry_after(retry_after_ms.div_ceil(1000)),
+            GameError::SpectatorNameRequired => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "Aby pisać na czacie, wejdź z nickiem lub zalogowany jako konto.",
+            )
+            .with_data(json!({ "reason": "spectator_name_required" })),
+            GameError::SpectatorsFull => conflict("SPECTATORS_FULL", "Partia ma komplet widzów"),
+            GameError::AudienceClosed => ApiError::new(
+                StatusCode::GONE,
+                "AUDIENCE_CLOSED",
+                "Twórca zamknął publiczność tej partii.",
+            ),
+            GameError::GameNotPublic => {
+                conflict("GAME_NOT_PUBLIC", "Ta partia nie jest publiczna.")
+            }
+            GameError::AudienceNotClosable => conflict(
+                "GAME_NOT_ACTIVE",
+                "Publiczność można zamknąć tylko w trwającej albo zakończonej partii.",
+            )
+            .with_data(json!({ "reason": "audience_not_closable" })),
             GameError::Corrupt => ApiError::internal_logged("game", &"a stored game is corrupt"),
             GameError::Db(error) => ApiError::internal_logged("database", &error),
         }

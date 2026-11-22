@@ -16,8 +16,8 @@ use crate::health::{HealthProbe, health};
 use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
 use crate::{
-    pages, pages_games, routes_account, routes_auth, routes_email, routes_games, routes_lobby,
-    routes_password,
+    pages, pages_games, routes_account, routes_auth, routes_chat, routes_email, routes_games,
+    routes_lobby, routes_password, routes_spectate,
 };
 
 /// Shared application state: explicit composition instead of a DI container.
@@ -86,6 +86,25 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route(
             "/invitations/{code}/accept",
             post(routes_games::accept_invitation),
+        )
+        .route(
+            "/games/{id}/chat",
+            get(routes_chat::chat_get).post(routes_chat::chat_post),
+        )
+        .route("/games/{id}/chat/settings", put(routes_chat::chat_settings))
+        .route(
+            "/games/{id}/audience/close",
+            post(routes_spectate::audience_close),
+        )
+        .route("/games/{id}/spectate", get(routes_spectate::spectate_state))
+        .route(
+            "/games/{id}/spectate/chat",
+            get(routes_chat::spectator_chat_get).post(routes_chat::spectator_chat_post),
+        )
+        .route("/games/{id}/qr", get(routes_spectate::game_qr))
+        .route(
+            "/invitations/{code}/spectate",
+            post(routes_spectate::spectate_join),
         )
         .route("/lobby", get(routes_lobby::lobby))
         .route(

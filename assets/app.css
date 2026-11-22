@@ -40,3 +40,15 @@ button.danger { background: var(--action-danger-bg); color: var(--action-danger-
 a.button { display: inline-block; padding: 0.6rem 1rem; border: 1px solid var(--board-line); text-decoration: none; min-height: 2.75rem; box-sizing: border-box; }
 ul.history, ul.seekers { list-style: none; padding: 0; }
 ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(--board-line); }
+.chat { border: 1px solid var(--board-line); padding: 0.75rem; margin: 1rem 0; }
+.chat-head { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0; }
+.chat-log { max-height: 15rem; overflow-y: auto; border: 1px solid var(--board-line); padding: 0.25rem 0.5rem; margin: 0.5rem 0; }
+.chat-log ol { list-style: none; margin: 0; padding: 0; }
+.chat-log li { padding: 0.25rem 0; }
+.chat-log li.pending { opacity: 0.55; }
+.chat-log li.mine .chat-name { font-weight: 700; }
+.chat-text { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.chat form input[type="text"] { width: 100%; box-sizing: border-box; }
+.badge { display: inline-block; border: 1px solid var(--board-line); padding: 0.15rem 0.5rem; }
+.qr { display: block; width: 100%; max-width: 200px; aspect-ratio: 1; background: #fff; }
+.result.neutral, .result.draw { border-left: 6px solid var(--board-line); padding: 0.5rem 0.75rem; }

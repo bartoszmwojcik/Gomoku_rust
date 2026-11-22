@@ -117,6 +117,14 @@ impl Database {
                 .execute(&mut *tx)
                 .await?;
         }
+        // The whole conversation of every game the account played goes with it (also the opponent's lines): the seat
+        // becomes "deleted", so the chat is unavailable and its numbering must not restart under a client's cursor.
+        sqlx::query(
+            "DELETE FROM chat_messages WHERE game_id IN (SELECT game_id FROM game_players WHERE user_id = $1)",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
         // The deleted account's name must not outlive it: the seat shows "deleted player".
         sqlx::query("UPDATE game_players SET display_name = NULL WHERE user_id = $1")
             .bind(user_id)

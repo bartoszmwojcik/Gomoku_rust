@@ -6,7 +6,7 @@ use gomoku_core::invitation_code::{format_invitation_code, invitation_url};
 use gomoku_core::rematch::{RematchStatus, StoredRematchRow, rematch_view};
 use gomoku_core::types::{GameStatus, RematchState};
 use gomoku_db::OffsetDateTime;
-use gomoku_db::games::{GameError, Snapshot, to_ms};
+use gomoku_db::games::{GameError, Snapshot, SpectatorState, to_ms};
 use serde_json::{Value, json};
 
 /// ISO 8601 UTC with milliseconds, like `Date.prototype.toISOString`.
@@ -108,20 +108,19 @@ pub fn game_view(
         "you": { "seat": snapshot.me.number(), "kind": me.map(|p| p.kind.clone()) },
     });
     let object = view.as_object_mut().ok_or(GameError::Corrupt)?;
-    if let Some(invitation) = &snapshot.invitation {
-        if game.status == GameStatus::Waiting {
-            object.insert(
-                "invitation".into(),
-                json!({
-                    "code": format_invitation_code(&invitation.code),
-                    "url": invitation_url(origin, &invitation.code),
-                    "expiresAt": iso_ms(invitation.expires_at),
-                }),
-            );
-        }
-        if game.status == GameStatus::Cancelled {
-            // handled below with the closed reason
-        }
+    if let Some(invitation) = snapshot
+        .invitation
+        .as_ref()
+        .filter(|_| game.status == GameStatus::Waiting)
+    {
+        object.insert(
+            "invitation".into(),
+            json!({
+                "code": format_invitation_code(&invitation.code),
+                "url": invitation_url(origin, &invitation.code),
+                "expiresAt": iso_ms(invitation.expires_at),
+            }),
+        );
     }
     if game.status == GameStatus::Cancelled
         && let Some(reason) = closed_reason(
@@ -131,6 +130,18 @@ pub fn game_view(
     {
         object.insert("closedReason".into(), json!(reason.as_str()));
     }
+    if let Some(count) = snapshot.audience {
+        object.insert("audience".into(), json!({ "spectators": count }));
+    }
+    if snapshot.me == gomoku_core::types::Seat::One
+        && game.is_public
+        && matches!(game.status, GameStatus::Active | GameStatus::Finished)
+    {
+        object.insert("canCloseAudience".into(), json!(true));
+    }
+    if game.audience_closed {
+        object.insert("audienceClosed".into(), json!(true));
+    }
     if let Some(rematch) = rematch_json(snapshot, now_ms) {
         object.insert("rematch".into(), rematch);
     }
@@ -139,6 +150,72 @@ pub fn game_view(
     }
     if game.origin == "rematch" {
         object.insert("fromRematch".into(), json!(true));
+    }
+    Ok(view)
+}
+
+/// What a spectator reads: the public part of the game, without the viewer's seat, the invitation, the rematch or any
+/// `seen` mark.
+pub fn spectator_view(
+    state: &SpectatorState,
+    after: usize,
+    now: OffsetDateTime,
+) -> Result<Value, GameError> {
+    let game = &state.game;
+    let board = board_view(
+        &BoardRow {
+            status: game.status,
+            black_seat: game.black_seat,
+            move_count: game.move_count,
+            moves: &game.moves,
+            winner: game.winner,
+            end_reason: game.end_reason,
+        },
+        after,
+    )
+    .map_err(|_| GameError::Corrupt)?;
+    let clock = clock_view(&game.clock_state(), to_ms(now));
+    let result = board.result.as_ref().map(|r| {
+        json!({
+            "winnerSeat": r.winner.map(|s| s.number()),
+            "reason": r.reason.as_str(),
+            "winLine": r.win_line,
+        })
+    });
+    let players: Vec<Value> = state
+        .players
+        .iter()
+        .map(|p| {
+            json!({
+                "seat": p.seat.number(),
+                "kind": p.kind,
+                "displayName": display_name_of(p.is_guest(), p.seat, p.nickname.as_deref(), p.display_name.as_deref(), p.current_name.as_deref()),
+            })
+        })
+        .collect();
+    let mut view = json!({
+        "status": game.status.as_str(),
+        "variant": "classic",
+        "timeControlMs": 600_000,
+        "moveCount": board.move_count,
+        "blackSeat": board.black_seat.map(|s| s.number()),
+        "turnSeat": board.turn_seat.map(|s| s.number()),
+        "moves": board.moves,
+        "result": result,
+        "clock": {
+            "remainingMs": clock.remaining_ms,
+            "running": clock.running.map(|s| s.number()),
+            "now": clock.now,
+        },
+        "players": players,
+        "canChat": state.can_chat,
+    });
+    let object = view.as_object_mut().ok_or(GameError::Corrupt)?;
+    if let Some(count) = state.audience {
+        object.insert("audience".into(), json!({ "spectators": count }));
+    }
+    if let (GameStatus::Finished, Some(at)) = (game.status, game.finished_at) {
+        object.insert("finishedAt".into(), json!(iso_ms(at)));
     }
     Ok(view)
 }

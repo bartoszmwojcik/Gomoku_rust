@@ -4,12 +4,14 @@
 //! There is no background worker: every time-based transition (an invitation expiring, a game nobody opened, a loss on
 //! time) is performed lazily by whoever touches the game next, inside the statements below.
 
+mod chat;
 mod create;
 mod history;
 mod invite;
 mod lobby;
 mod play;
 mod rematch;
+mod spectate;
 
 use gomoku_core::clock::{ClockState, deadline_ms, seat_out_of_time};
 use gomoku_core::constants::READY_DEADLINE_MS;
@@ -20,12 +22,14 @@ use sqlx::{PgConnection, Row};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+pub use chat::{ChatMessageRow, ChatRead, ChatSent};
 pub use create::{CreateOutcome, CreatedGame, GuestCreateInput};
 pub use history::{HistoryEntryRow, HistoryPageRows, ReviewRows};
 pub use invite::{AcceptInput, AcceptOutcome, JoinAs, PreviewState, PreviewView, Viewer};
 pub use lobby::{LobbyRows, SeekerRow, SeekingStatus};
 pub use play::{MoveInput, MoveOutcome};
 pub use rematch::{RematchAccepted, RematchOffered};
+pub use spectate::{SpectateJoin, Spectator, SpectatorState};
 
 use crate::{Database, DbError};
 
@@ -87,6 +91,24 @@ pub enum GameError {
     LobbySeekerExpired,
     #[error("cannot pick oneself")]
     CannotPickSelf,
+    #[error("the chat is unavailable")]
+    ChatUnavailable,
+    #[error("the chat is switched off")]
+    ChatDisabled,
+    #[error("the chat of the game is full")]
+    ChatFull,
+    #[error("too soon after the last message")]
+    ChatInterval { retry_after_ms: u64 },
+    #[error("a spectator needs a name to write")]
+    SpectatorNameRequired,
+    #[error("the game has all its spectators")]
+    SpectatorsFull,
+    #[error("the audience was closed")]
+    AudienceClosed,
+    #[error("the game is not public")]
+    GameNotPublic,
+    #[error("the audience cannot be closed now")]
+    AudienceNotClosable,
     #[error("a stored game is corrupt")]
     Corrupt,
     #[error(transparent)]
@@ -130,11 +152,13 @@ pub struct GameRow {
     pub rematch_offered_by: Option<Seat>,
     pub rematch_expires_at: Option<OffsetDateTime>,
     pub rematch_game_id: Option<Uuid>,
+    pub is_public: bool,
+    pub audience_closed: bool,
 }
 
 pub(crate) const GAME_COLUMNS: &str = "id, origin, status, created_at, started_at, finished_at, black_seat, move_count, moves, \
      winner_seat, end_reason, clock_ms_1, clock_ms_2, turn_started_at, rematch_state, rematch_offered_by_seat, \
-     rematch_expires_at, rematch_game_id";
+     rematch_expires_at, rematch_game_id, is_public, audience_closed_at IS NOT NULL AS audience_closed";
 
 fn seat_of(value: Option<i16>) -> Option<Seat> {
     value
@@ -172,6 +196,8 @@ impl GameRow {
             rematch_offered_by: seat_of(row.try_get("rematch_offered_by_seat")?),
             rematch_expires_at: row.try_get("rematch_expires_at")?,
             rematch_game_id: row.try_get("rematch_game_id")?,
+            is_public: row.try_get("is_public")?,
+            audience_closed: row.try_get("audience_closed")?,
         })
     }
 
@@ -250,6 +276,8 @@ pub struct Snapshot {
     pub me: Seat,
     /// Seat 1's invitation while the game waits; for a cancelled one-player game it tells why it was cancelled.
     pub invitation: Option<InvitationRow>,
+    /// Present spectators: only while a public game is in progress.
+    pub audience: Option<i64>,
 }
 
 /// What a lazy-closing statement is scoped to.
@@ -448,6 +476,7 @@ pub(crate) async fn snapshot(
     conn: &mut PgConnection,
     game_id: Uuid,
     caller: Uuid,
+    now: OffsetDateTime,
 ) -> Result<Snapshot, GameError> {
     let game = read_game(conn, game_id).await?.ok_or(GameError::NotFound)?;
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -484,12 +513,45 @@ pub(crate) async fn snapshot(
     } else {
         None
     };
+    let audience = audience_of(conn, &game, now).await?;
     Ok(Snapshot {
         game,
         players,
         me,
         invitation,
+        audience,
     })
+}
+
+/// Spectators present now: seen within the presence window and with access alive.
+pub(crate) async fn count_present_spectators(
+    conn: &mut PgConnection,
+    game_id: Uuid,
+    now: OffsetDateTime,
+) -> Result<i64, sqlx::Error> {
+    let seen_after =
+        now - Duration::milliseconds(gomoku_core::constants::SPECTATOR_PRESENCE_MS as i64);
+    sqlx::query_scalar(
+        "SELECT count(*) FROM game_spectators WHERE game_id = $1 AND expires_at > $2 AND last_seen_at > $3",
+    )
+    .bind(game_id)
+    .bind(now)
+    .bind(seen_after)
+    .fetch_one(conn)
+    .await
+}
+
+/// The audience counter: shown only for a public game in progress.
+pub(crate) async fn audience_of(
+    conn: &mut PgConnection,
+    game: &GameRow,
+    now: OffsetDateTime,
+) -> Result<Option<i64>, sqlx::Error> {
+    if game.is_public && game.status == GameStatus::Active {
+        Ok(Some(count_present_spectators(conn, game.id, now).await?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Where a player currently stands in the game slot sense.
