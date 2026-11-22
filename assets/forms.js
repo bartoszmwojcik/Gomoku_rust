@@ -52,10 +52,13 @@
     const body = {};
     for (const el of form.elements) {
       if (!el.name) continue;
+      if (el.type === "radio") { if (el.checked) body[el.name] = el.dataset.json === "int" ? Number(el.value) : el.value; continue; }
       if (el.type === "checkbox") body[el.name] = el.checked;
       else if (el.dataset.json === "bool") body[el.name] = el.value === "true";
       else body[el.name] = el.value;
     }
+    // The classic game sends no settings at all (old requests stay byte-identical).
+    if (body.variant === "classic") { delete body.variant; delete body.timeControlMs; }
     if (submit) submit.disabled = true;
     const slot = form.querySelector("[data-form-error]");
     if (slot) slot.textContent = texts.sending ?? "";

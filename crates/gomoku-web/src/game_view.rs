@@ -1,12 +1,13 @@
 //! The JSON a client gets about a game (the poll and the answers of moves and resignation).
 
-use gomoku_core::clock::clock_view;
+use gomoku_core::clock::{ClockView, clock_view};
 use gomoku_core::game::{BoardRow, board_view, closed_reason, display_name_of};
 use gomoku_core::invitation_code::{format_invitation_code, invitation_url};
+use gomoku_core::paper::{Five, paper_turn_seat, score_game};
 use gomoku_core::rematch::{RematchStatus, StoredRematchRow, rematch_view};
-use gomoku_core::types::{GameStatus, RematchState};
+use gomoku_core::types::{GameStatus, GameVariant, RematchState, Seat};
 use gomoku_db::OffsetDateTime;
-use gomoku_db::games::{GameError, Snapshot, SpectatorState, to_ms};
+use gomoku_db::games::{GameError, GameRow, PaperSnapshot, Snapshot, SpectatorState, to_ms};
 use serde_json::{Value, json};
 
 /// ISO 8601 UTC with milliseconds, like `Date.prototype.toISOString`.
@@ -47,16 +48,69 @@ fn rematch_json(snapshot: &Snapshot, now_ms: i64) -> Option<Value> {
     }))
 }
 
-/// Builds the view of a snapshot for a client that already knows the first `after` moves. `origin` is the public origin
-/// of the app (for the invitation link).
-pub fn game_view(
-    snapshot: &Snapshot,
-    after: usize,
-    now: OffsetDateTime,
-    origin: &str,
-) -> Result<Value, GameError> {
-    let game = &snapshot.game;
-    let now_ms = to_ms(now);
+/// The variant-dependent part of a view: the board (classic) or the sheet (paper), the result and the clock.
+struct Parts {
+    move_count: usize,
+    black_seat: Option<Seat>,
+    turn_seat: Option<Seat>,
+    moves: Value,
+    result: Value,
+    clock: ClockView,
+    paper: Option<Value>,
+}
+
+fn five_json(five: &Five) -> Value {
+    json!({
+        "seat": five.seat.number(),
+        "from": { "x": five.from.0, "y": five.from.1 },
+        "to": { "x": five.to.0, "y": five.to.1 },
+    })
+}
+
+fn paper_parts(game: &GameRow, paper: &PaperSnapshot, after: usize, now: OffsetDateTime) -> Parts {
+    let scoring = score_game(&paper.stones());
+    let moves: Vec<Value> = paper
+        .moves
+        .iter()
+        .filter(|m| usize::try_from(m.n).is_ok_and(|n| n > after))
+        .map(|m| {
+            json!({
+                "n": m.n, "x": m.x, "y": m.y, "seat": m.seat.number(), "auto": m.auto, "at": iso_ms(m.at),
+            })
+        })
+        .collect();
+    let turn_seat = match (game.status, game.black_seat) {
+        (GameStatus::Active, Some(black)) => Some(paper_turn_seat(paper.move_count, black)),
+        _ => None,
+    };
+    let result = match (game.status, game.end_reason) {
+        (GameStatus::Finished, Some(reason)) => json!({
+            "winnerSeat": game.winner.map(|s| s.number()),
+            "reason": reason.as_str(),
+            "winLine": null,
+            "scores": scoring.scores,
+        }),
+        _ => Value::Null,
+    };
+    Parts {
+        move_count: paper.move_count,
+        black_seat: game.black_seat,
+        turn_seat,
+        moves: json!([]),
+        result,
+        clock: clock_view(&paper.clock_state(game), to_ms(now)),
+        paper: Some(json!({
+            "moveCount": paper.move_count,
+            "moves": moves,
+            "scores": scoring.scores,
+            "fives": scoring.fives.iter().map(five_json).collect::<Vec<_>>(),
+            "autoSeat": paper.auto_seat.map(|s| s.number()),
+            "autoMoveAt": paper.pending_auto_at.map(iso_ms),
+        })),
+    }
+}
+
+fn classic_parts(game: &GameRow, after: usize, now: OffsetDateTime) -> Result<Parts, GameError> {
     let board = board_view(
         &BoardRow {
             status: game.status,
@@ -69,14 +123,48 @@ pub fn game_view(
         after,
     )
     .map_err(|_| GameError::Corrupt)?;
-    let clock = clock_view(&game.clock_state(), now_ms);
-    let result = board.result.as_ref().map(|r| {
+    let result = board.result.as_ref().map_or(Value::Null, |r| {
         json!({
             "winnerSeat": r.winner.map(|s| s.number()),
             "reason": r.reason.as_str(),
             "winLine": r.win_line,
         })
     });
+    Ok(Parts {
+        move_count: board.move_count,
+        black_seat: board.black_seat,
+        turn_seat: board.turn_seat,
+        moves: json!(board.moves),
+        result,
+        clock: clock_view(&game.clock_state(), to_ms(now)),
+        paper: None,
+    })
+}
+
+fn parts_of(
+    game: &GameRow,
+    paper: Option<&PaperSnapshot>,
+    after: usize,
+    now: OffsetDateTime,
+) -> Result<Parts, GameError> {
+    match (game.variant, paper) {
+        (GameVariant::Paper, Some(paper)) => Ok(paper_parts(game, paper, after, now)),
+        (GameVariant::Paper, None) => Err(GameError::Corrupt),
+        (GameVariant::Classic, _) => classic_parts(game, after, now),
+    }
+}
+
+/// Builds the view of a snapshot for a client that already knows the first `after` moves. `origin` is the public origin
+/// of the app (for the invitation link).
+pub fn game_view(
+    snapshot: &Snapshot,
+    after: usize,
+    now: OffsetDateTime,
+    origin: &str,
+) -> Result<Value, GameError> {
+    let game = &snapshot.game;
+    let now_ms = to_ms(now);
+    let parts = parts_of(game, snapshot.paper.as_ref(), after, now)?;
     let players: Vec<Value> = snapshot
         .players
         .iter()
@@ -92,22 +180,25 @@ pub fn game_view(
     let me = snapshot.players.iter().find(|p| p.seat == snapshot.me);
     let mut view = json!({
         "status": game.status.as_str(),
-        "variant": "classic",
-        "timeControlMs": 600_000,
-        "moveCount": board.move_count,
-        "blackSeat": board.black_seat.map(|s| s.number()),
-        "turnSeat": board.turn_seat.map(|s| s.number()),
-        "moves": board.moves,
-        "result": result,
+        "variant": game.variant.as_str(),
+        "timeControlMs": game.time_control_ms,
+        "moveCount": parts.move_count,
+        "blackSeat": parts.black_seat.map(|s| s.number()),
+        "turnSeat": parts.turn_seat.map(|s| s.number()),
+        "moves": parts.moves,
+        "result": parts.result,
         "clock": {
-            "remainingMs": clock.remaining_ms,
-            "running": clock.running.map(|s| s.number()),
-            "now": clock.now,
+            "remainingMs": parts.clock.remaining_ms,
+            "running": parts.clock.running.map(|s| s.number()),
+            "now": parts.clock.now,
         },
         "players": players,
         "you": { "seat": snapshot.me.number(), "kind": me.map(|p| p.kind.clone()) },
     });
     let object = view.as_object_mut().ok_or(GameError::Corrupt)?;
+    if let Some(paper) = parts.paper {
+        object.insert("paper".into(), paper);
+    }
     if let Some(invitation) = snapshot
         .invitation
         .as_ref()
@@ -162,26 +253,7 @@ pub fn spectator_view(
     now: OffsetDateTime,
 ) -> Result<Value, GameError> {
     let game = &state.game;
-    let board = board_view(
-        &BoardRow {
-            status: game.status,
-            black_seat: game.black_seat,
-            move_count: game.move_count,
-            moves: &game.moves,
-            winner: game.winner,
-            end_reason: game.end_reason,
-        },
-        after,
-    )
-    .map_err(|_| GameError::Corrupt)?;
-    let clock = clock_view(&game.clock_state(), to_ms(now));
-    let result = board.result.as_ref().map(|r| {
-        json!({
-            "winnerSeat": r.winner.map(|s| s.number()),
-            "reason": r.reason.as_str(),
-            "winLine": r.win_line,
-        })
-    });
+    let parts = parts_of(game, state.paper.as_ref(), after, now)?;
     let players: Vec<Value> = state
         .players
         .iter()
@@ -195,22 +267,25 @@ pub fn spectator_view(
         .collect();
     let mut view = json!({
         "status": game.status.as_str(),
-        "variant": "classic",
-        "timeControlMs": 600_000,
-        "moveCount": board.move_count,
-        "blackSeat": board.black_seat.map(|s| s.number()),
-        "turnSeat": board.turn_seat.map(|s| s.number()),
-        "moves": board.moves,
-        "result": result,
+        "variant": game.variant.as_str(),
+        "timeControlMs": game.time_control_ms,
+        "moveCount": parts.move_count,
+        "blackSeat": parts.black_seat.map(|s| s.number()),
+        "turnSeat": parts.turn_seat.map(|s| s.number()),
+        "moves": parts.moves,
+        "result": parts.result,
         "clock": {
-            "remainingMs": clock.remaining_ms,
-            "running": clock.running.map(|s| s.number()),
-            "now": clock.now,
+            "remainingMs": parts.clock.remaining_ms,
+            "running": parts.clock.running.map(|s| s.number()),
+            "now": parts.clock.now,
         },
         "players": players,
         "canChat": state.can_chat,
     });
     let object = view.as_object_mut().ok_or(GameError::Corrupt)?;
+    if let Some(paper) = parts.paper {
+        object.insert("paper".into(), paper);
+    }
     if let Some(count) = state.audience {
         object.insert("audience".into(), json!({ "spectators": count }));
     }

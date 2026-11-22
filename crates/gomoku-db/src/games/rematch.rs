@@ -3,11 +3,12 @@
 use gomoku_core::constants::REMATCH_TTL_MS;
 use gomoku_core::game::{GUEST_REMATCH_FRESH_MS, derive_rematch_token};
 use gomoku_core::rematch::rematch_black_seat;
-use gomoku_core::types::{GameStatus, Seat};
+use gomoku_core::types::{GameStatus, GameVariant, Seat};
 use sqlx::Row;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use super::paper::insert_paper_state;
 use super::{
     ACTIVE_SLOT_INDEX, GameError, Scope, close_stale, from_ms, read_game, to_ms, unique_violation,
 };
@@ -254,13 +255,19 @@ impl Database {
         let black = rematch_black_seat(game.black_seat.ok_or(GameError::Corrupt)?);
         let new_game = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO games (id, origin, status, created_at, started_at, black_seat) VALUES ($1, 'rematch', 'active', $2, $2, $3)",
+            "INSERT INTO games (id, origin, status, created_at, started_at, black_seat, variant, time_control_ms, clock_ms_1, clock_ms_2) \
+             VALUES ($1, 'rematch', 'active', $2, $2, $3, $4, $5, $5, $5)",
         )
         .bind(new_game)
         .bind(now)
         .bind(i16::from(black.number()))
+        .bind(game.variant.as_str())
+        .bind(game.time_control_ms as i32)
         .execute(&mut *tx)
         .await?;
+        if game.variant == GameVariant::Paper {
+            insert_paper_state(&mut tx, new_game).await?;
+        }
         let caller_hash = derived(new_game).map(|token| sha256_hex(&token));
         for p in &players {
             let hash = if p.id == player_id {

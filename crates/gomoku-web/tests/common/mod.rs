@@ -281,6 +281,7 @@ impl Reply {
 }
 
 /// A browser-like client: keeps cookies between requests and sends the CSRF headers on API calls.
+#[derive(Clone)]
 pub struct Client {
     router: Router,
     cookies: Vec<(String, String)>,

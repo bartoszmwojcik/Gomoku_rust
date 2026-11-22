@@ -1,7 +1,7 @@
 // The read-only room of a spectator of a public game: the board, the clocks, the audience flag, the QR code and the chat.
 (() => {
   const { gt } = window.GT;
-  const { api, h, formatClock, stonesOf, createBoard, neutralOutcomeOf, playerLabel } = window.Gomoku;
+  const { api, h, formatClock, stonesOf, createBoard, neutralOutcomeOf, playerLabel, createPaperBoard, paperMark } = window.Gomoku;
 
   const POLL_MS = 2000;
   const SLOW_POLL_MS = 5000;
@@ -25,6 +25,9 @@
   let lastSig = "";
 
   const board = createBoard({ onCell: () => {} });
+  const paperBoard = createPaperBoard({ phone: false, onSelect: () => {} });
+  const isPaper = () => game.variant === "paper";
+  const known = () => (isPaper() ? game.paper.moves.length : game.moves.length);
   const chat = window.GomokuChat.createChat({
     base: `/api/games/${gameId}/spectate`,
     spectator: true,
@@ -39,8 +42,10 @@
   const colourOf = (seat) => (seat === game.blackSeat ? "black" : "white");
 
   const merge = (current, next, after) => {
-    if (next.moveCount < current.moves.length) return current;
+    const count = current.variant === "paper" ? current.paper.moves.length : current.moves.length;
+    if (next.moveCount < count) return current;
     if (current.status === "finished" && next.status !== "finished") return current;
+    if (next.variant === "paper") return { ...next, paper: { ...next.paper, moves: current.paper.moves.slice(0, after).concat(next.paper.moves) } };
     return { ...next, moves: current.moves.slice(0, after).concat(next.moves) };
   };
 
@@ -54,7 +59,7 @@
   const readOnce = async () => {
     if (reading || screen !== "room") return;
     reading = true;
-    const after = game.moves.length;
+    const after = known();
     const controller = new AbortController();
     const abort = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
     const result = await api(`/api/games/${gameId}/spectate?after=${after}`, { method: "GET", signal: controller.signal });
@@ -84,7 +89,8 @@
   const clockEl = (seat) => {
     const player = game.players.find((p) => p.seat === seat);
     return h("div", { class: "clock", "data-clock-seat": seat, "data-testid": `clock-${colourOf(seat)}` },
-      h("span", { class: "clock-label" }, gt("game.spectator.sideName", { side: gt(`game.sides.classic.title.${colourOf(seat)}`) }), player ? playerLabel(player, null) : ""),
+      h("span", { class: "clock-label" }, gt("game.spectator.sideName", { side: gt(`game.sides.${isPaper() ? "paper" : "classic"}.title.${colourOf(seat)}`) }), player ? playerLabel(player, null) : "",
+        isPaper() ? [h("span", { "data-testid": "score" }, gt("game.shared.score", { score: game.paper.scores[seat - 1] })), game.paper.autoSeat === seat ? gt("game.shared.automat") : ""] : null),
       " ", h("span", { class: "clock-time" }, ""));
   };
 
@@ -100,16 +106,25 @@
     if (game.status === "cancelled") {
       return [h("h1", null, gt("game.shared.cancelledHeading")), alertBox("warning", gt("game.spectator.cancelled")), h("p", null, h("a", { href: "/" }, gt("game.shared.backHome")))];
     }
-    const stones = stonesOf(game.moves);
-    const last = game.moves.length ? game.moves[game.moves.length - 1] : null;
-    board.update({ stones, last, winLine: game.result?.winLine ?? [], readOnly: true });
+    const paper = isPaper();
+    let boardEl = board.el;
+    if (paper) {
+      const stones = game.paper.moves.map((m) => ({ x: m.x, y: m.y, seat: m.seat, auto: m.auto }));
+      paperBoard.update({ stones, fives: game.paper.fives, last: stones.length ? stones[stones.length - 1] : null, disabled: true,
+        colors: { 1: game.blackSeat === 1 ? "black" : "white", 2: game.blackSeat === 2 ? "black" : "white" }, token: "spectator" });
+      boardEl = paperBoard.el;
+    } else {
+      const stones = stonesOf(game.moves);
+      const last = game.moves.length ? game.moves[game.moves.length - 1] : null;
+      board.update({ stones, last, winLine: game.result?.winLine ?? [], readOnly: true });
+    }
     let banner;
     if (finished && game.result) {
-      const outcome = neutralOutcomeOf(game.result, game.blackSeat, game.players);
+      const outcome = neutralOutcomeOf(game.result, game.blackSeat, game.players, paper);
       banner = h("section", { class: `result ${outcome.kind}`, role: "status", "data-testid": "result" }, h("strong", null, outcome.title), " ", outcome.detail);
     } else if (game.turnSeat) {
       const on = game.players.find((p) => p.seat === game.turnSeat);
-      banner = h("p", { class: "turn", role: "status", "data-testid": "turn-status" }, gt("game.spectator.turn", { side: gt(`game.sides.classic.genitive.${colourOf(game.turnSeat)}`), name: on ? playerLabel(on, null) : "" }));
+      banner = h("p", { class: "turn", role: "status", "data-testid": "turn-status" }, gt("game.spectator.turn", { side: gt(`game.sides.${paper ? "paper" : "classic"}.genitive.${colourOf(game.turnSeat)}`), name: on ? playerLabel(on, null) : "" }));
     }
     const poll = !finished && fails >= 1
       ? (fails >= FAILS_BEFORE_ALERT
@@ -123,7 +138,7 @@
       alertBox("info", gt("game.spectator.youWatch")),
       flag(), poll, banner,
       clockEl(black), clockEl(white),
-      h("div", { class: "board-host", "aria-label": gt("game.shared.boardLabel") }, board.el),
+      h("div", { class: "board-host", "aria-label": gt("game.shared.boardLabel") }, boardEl),
       game.audience ? qrPanel() : null,
       chat.el,
       h("p", null, h("a", { href: "/" }, gt("game.shared.backHome"))),

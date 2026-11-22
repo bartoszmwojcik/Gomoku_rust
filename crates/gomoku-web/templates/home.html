@@ -21,6 +21,8 @@
 {% when Some with (_user) %}
 <form data-api="/api/games" data-redirect-game data-testid="create-form" data-reveal-RATE_LIMITED="#create-limit" novalidate>
   <p data-form-error role="alert" data-testid="form-error"></p>
+  <div data-settings data-testid="game-settings"></div>
+  <p data-testid="home-rules" data-rules aria-live="polite"></p>
   <p><label><input type="checkbox" name="isPublic" data-testid="create-game-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
   <button type="submit" data-testid="create-game">{{ ctx.tr.t("home.create.createInvitation") }}</button>
 </form>

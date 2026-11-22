@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}{{ ctx.tr.t("game.meta.title") }}{% endblock %}
-{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/chat.js" defer></script><script src="/assets/spectator-room.js" defer></script>{% endblock %}
+{% block head %}<script src="/assets/gomoku.js" defer></script><script src="/assets/paper-board.js" defer></script><script src="/assets/chat.js" defer></script><script src="/assets/spectator-room.js" defer></script>{% endblock %}
 {% block content %}
 <div id="spectator-room" data-game-id="{{ game_id }}" data-testid="spectator-room"></div>
 <noscript><p>{{ ctx.tr.t("game.shared.network") }}</p></noscript>

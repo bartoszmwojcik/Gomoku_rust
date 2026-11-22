@@ -41,6 +41,44 @@ pub struct Rule {
     pub clear_column: Option<&'static str>,
 }
 
+/// The moment the running clock of an active game runs out (or a game nobody opened is due), for the row `$g` of `games`.
+/// A paper game takes the seat on turn from its own counters: in the automat phase the opponent of the automat's seat.
+macro_rules! game_deadline_sql {
+    ($g:literal) => {
+        concat!(
+            "COALESCE(",
+            $g,
+            ".turn_started_at + (CASE WHEN (CASE WHEN ",
+            $g,
+            ".variant = 'paper' THEN \
+               (SELECT CASE WHEN s.auto_seat IS NOT NULL THEN 3 - s.auto_seat \
+                            WHEN s.move_count % 2 = 0 THEN ",
+            $g,
+            ".black_seat ELSE 3 - ",
+            $g,
+            ".black_seat END \
+                FROM paper_game_states s WHERE s.game_id = ",
+            $g,
+            ".id) \
+              ELSE CASE WHEN ",
+            $g,
+            ".move_count % 2 = 0 THEN ",
+            $g,
+            ".black_seat ELSE 3 - ",
+            $g,
+            ".black_seat END END) = 1 \
+             THEN ",
+            $g,
+            ".clock_ms_1 ELSE ",
+            $g,
+            ".clock_ms_2 END) * interval '1 millisecond', \
+             ",
+            $g,
+            ".started_at + 900000 * interval '1 millisecond')"
+        )
+    };
+}
+
 pub const RULES: [Rule; 15] = [
     Rule {
         // 1 h margin: a session that expired mid-game stays until the game ends (games last well under an hour).
@@ -106,12 +144,14 @@ pub const RULES: [Rule; 15] = [
         key: "chatMessages",
         table: "chat_messages",
         primary_key: "id",
-        condition: "EXISTS (SELECT 1 FROM games g WHERE g.id = chat_messages.game_id AND ( \
+        condition: concat!(
+            "EXISTS (SELECT 1 FROM games g WHERE g.id = chat_messages.game_id AND ( \
                       (g.status = 'finished' AND g.finished_at < $1) \
                       OR (g.status = 'cancelled' AND g.created_at < $1) \
-                      OR (g.status = 'active' AND COALESCE(g.turn_started_at + (CASE WHEN (CASE WHEN g.move_count % 2 = 0 THEN g.black_seat ELSE 3 - g.black_seat END) = 1 \
-                                                                  THEN g.clock_ms_1 ELSE g.clock_ms_2 END) * interval '1 millisecond', \
-                                         g.started_at + 900000 * interval '1 millisecond') < $1)))",
+                      OR (g.status = 'active' AND ",
+            game_deadline_sql!("g"),
+            " < $1)))"
+        ),
         grace_ms: HOUR_MS,
         protects_email: false,
         clear_column: None,
@@ -153,10 +193,12 @@ pub const RULES: [Rule; 15] = [
         key: "guestOnlyActiveGames",
         table: "games",
         primary_key: "id",
-        condition: "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
-                    AND COALESCE(turn_started_at + (CASE WHEN (CASE WHEN move_count % 2 = 0 THEN black_seat ELSE 3 - black_seat END) = 1 \
-                                                          THEN clock_ms_1 ELSE clock_ms_2 END) * interval '1 millisecond', \
-                                 started_at + 900000 * interval '1 millisecond') < $1",
+        condition: concat!(
+            "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
+                    AND ",
+            game_deadline_sql!("games"),
+            " < $1"
+        ),
         grace_ms: HOUR_MS,
         protects_email: false,
         clear_column: None,

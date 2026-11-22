@@ -1,10 +1,13 @@
 //! The lobby: accounts mark themselves as looking for a game and others pick them.
 
-use gomoku_core::types::Seat;
+use gomoku_core::paper::GameSettings;
+use gomoku_core::types::{GameVariant, Seat};
 use sqlx::Row;
+use sqlx::postgres::PgRow;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use super::paper::insert_paper_state;
 use super::{ACTIVE_SLOT_INDEX, CurrentGame, GameError, Scope, close_stale, unique_violation};
 use crate::Database;
 
@@ -14,6 +17,7 @@ pub struct SeekingStatus {
     pub id: Uuid,
     pub created_at: OffsetDateTime,
     pub expires_in_ms: i32,
+    pub settings: GameSettings,
 }
 
 /// Another seeker as the list shows them: never an e-mail or an account id. `id` is the handle a pick uses.
@@ -23,6 +27,7 @@ pub struct SeekerRow {
     pub display_name: String,
     pub since_ms: i32,
     pub expires_in_ms: i32,
+    pub settings: GameSettings,
 }
 
 #[derive(Debug, Clone)]
@@ -33,13 +38,21 @@ pub struct LobbyRows {
     pub seekers: Vec<SeekerRow>,
 }
 
+fn settings_of(row: &PgRow) -> Result<GameSettings, sqlx::Error> {
+    Ok(GameSettings {
+        variant: GameVariant::parse(&row.try_get::<String, _>("variant")?)
+            .ok_or_else(|| sqlx::Error::Decode("unknown variant".into()))?,
+        time_control_ms: i64::from(row.try_get::<i32, _>("time_control_ms")?),
+    })
+}
+
 async fn own_status(
     db: &Database,
     user_id: Uuid,
     now: OffsetDateTime,
 ) -> Result<Option<SeekingStatus>, GameError> {
     let row = sqlx::query(
-        "SELECT id, created_at, (extract(epoch FROM (expires_at - $2::timestamptz)) * 1000)::int AS expires_in_ms \
+        "SELECT id, created_at, variant, time_control_ms, (extract(epoch FROM (expires_at - $2::timestamptz)) * 1000)::int AS expires_in_ms \
          FROM lobby_seekers WHERE user_id = $1 AND expires_at > $2",
     )
     .bind(user_id)
@@ -51,6 +64,7 @@ async fn own_status(
             id: r.try_get("id")?,
             created_at: r.try_get("created_at")?,
             expires_in_ms: r.try_get("expires_in_ms")?,
+            settings: settings_of(&r)?,
         })
     })
     .transpose()
@@ -65,6 +79,7 @@ impl Database {
         user_id: Uuid,
         now: OffsetDateTime,
         ttl_ms: i64,
+        settings: GameSettings,
     ) -> Result<SeekingStatus, GameError> {
         self.settle_for(user_id, now).await?;
         let mut tx = self.pool().begin().await?;
@@ -87,13 +102,16 @@ impl Database {
             });
         }
         sqlx::query(
-            "INSERT INTO lobby_seekers (user_id, created_at, expires_at) VALUES ($1, $2, $3) \
-             ON CONFLICT (user_id) DO UPDATE SET created_at = excluded.created_at, expires_at = excluded.expires_at \
+            "INSERT INTO lobby_seekers (user_id, created_at, expires_at, variant, time_control_ms) VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (user_id) DO UPDATE SET created_at = excluded.created_at, expires_at = excluded.expires_at, \
+               variant = excluded.variant, time_control_ms = excluded.time_control_ms \
              WHERE lobby_seekers.expires_at <= $2",
         )
         .bind(user_id)
         .bind(now)
         .bind(now + Duration::milliseconds(ttl_ms))
+        .bind(settings.variant.as_str())
+        .bind(settings.time_control_ms as i32)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -122,7 +140,7 @@ impl Database {
         let current_game = self.current_game(user_id, now).await?;
         let me = own_status(self, user_id, now).await?;
         let rows = sqlx::query(
-            "SELECT s.id, u.display_name, \
+            "SELECT s.id, u.display_name, s.variant, s.time_control_ms, \
                     greatest(0, (extract(epoch FROM ($2::timestamptz - s.created_at)) * 1000))::int AS since_ms, \
                     (extract(epoch FROM (s.expires_at - $2::timestamptz)) * 1000)::int AS expires_in_ms \
              FROM lobby_seekers s JOIN users u ON u.id = s.user_id \
@@ -143,6 +161,7 @@ impl Database {
                     display_name: r.try_get("display_name")?,
                     since_ms: r.try_get("since_ms")?,
                     expires_in_ms: r.try_get("expires_in_ms")?,
+                    settings: settings_of(r)?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -167,12 +186,15 @@ impl Database {
             let mut conn = self.pool().acquire().await?;
             close_stale(&mut conn, now, Scope::User(picker)).await?;
         }
-        let owner: Uuid = sqlx::query("SELECT user_id FROM lobby_seekers WHERE id = $1")
-            .bind(seeker_id)
-            .fetch_optional(self.pool())
-            .await?
-            .ok_or(GameError::LobbySeekerTaken)?
-            .try_get("user_id")?;
+        let seeker = sqlx::query(
+            "SELECT user_id, variant, time_control_ms FROM lobby_seekers WHERE id = $1",
+        )
+        .bind(seeker_id)
+        .fetch_optional(self.pool())
+        .await?
+        .ok_or(GameError::LobbySeekerTaken)?;
+        let owner: Uuid = seeker.try_get("user_id")?;
+        let settings = settings_of(&seeker)?;
         if owner == picker {
             return Err(GameError::CannotPickSelf);
         }
@@ -235,13 +257,19 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         let game_id: Uuid = sqlx::query(
-            "INSERT INTO games (origin, status, created_at, started_at, black_seat) VALUES ('lobby', 'active', $1, $1, $2) RETURNING id",
+            "INSERT INTO games (origin, status, created_at, started_at, black_seat, variant, time_control_ms, clock_ms_1, clock_ms_2) \
+             VALUES ('lobby', 'active', $1, $1, $2, $3, $4, $4, $4) RETURNING id",
         )
         .bind(now)
         .bind(i16::from(black_seat.number()))
+        .bind(settings.variant.as_str())
+        .bind(settings.time_control_ms as i32)
         .fetch_one(&mut *tx)
         .await?
         .try_get("id")?;
+        if settings.variant == GameVariant::Paper {
+            insert_paper_state(&mut tx, game_id).await?;
+        }
         for (seat, user) in [(1_i16, picker), (2_i16, owner)] {
             let inserted = sqlx::query(
                 "INSERT INTO game_players (game_id, seat, kind, user_id, is_active, joined_at, display_name) \

@@ -72,7 +72,14 @@
     return result;
   };
 
-  const mark = () => action(() => api("/api/lobby/seeking", { method: "PUT" }), (data) => { me = data.me; stamp = performance.now(); read(); });
+  const settingsText = (o) => (o.variant === "paper"
+    ? gt("home.settings.line", { variant: gt("home.settings.variants.paper"), minutes: o.timeControlMs / 60000 })
+    : gtp("home.settings.classicRules", 10));
+  const pickerEl = document.createElement("div");
+  pickerEl.dataset.testid = "game-settings";
+  const picker = window.GomokuSettings.mount(pickerEl);
+
+  const mark = () => action(() => api("/api/lobby/seeking", { method: "PUT", body: picker.get() }), (data) => { me = data.me; stamp = performance.now(); read(); });
   const withdraw = () => action(() => api("/api/lobby/seeking", { method: "DELETE" }), () => { me = null; });
   const pick = async (seeker) => {
     const result = await action(() => api(`/api/lobby/seekers/${seeker.id}/pick`), (data) => { window.location.assign(`/games/${data.gameId}`); });
@@ -111,9 +118,10 @@
       if (expiredNotice) parts.push(alertBox("info", h("strong", null, gt("lobby.expiredTitle")), " ", gt("lobby.markAgain")));
       parts.push(status
         ? h("section", { "data-testid": "lobby-seeking" }, h("h2", null, gt("lobby.seekingTitle")),
+          h("p", { "data-testid": "seeking-settings" }, settingsText(status)),
           h("p", { role: "status" }, `${gt("lobby.seekingExpires")} `, h("span", { "data-expires": status.expiresInMs }, minutes(left(status.expiresInMs)))),
           h("button", { type: "button", disabled: busy, onclick: withdraw }, gt("lobby.withdraw")))
-        : h("section", { "data-testid": "lobby-mark" }, h("button", { type: "button", disabled: busy, "data-testid": "mark", onclick: mark }, gt("lobby.mark"))));
+        : h("section", { "data-testid": "lobby-mark" }, pickerEl, h("button", { type: "button", disabled: busy, "data-testid": "mark", onclick: mark }, gt("lobby.mark"))));
       const live = seekers.filter((s) => left(s.expiresInMs) > 0);
       const list = failures >= FAILURES_BEFORE_ERROR
         ? alertBox("danger", h("strong", null, gt("lobby.loadFailedTitle")), " ", gt("lobby.loadFailedBody"), " ", h("button", { type: "button", onclick: () => { failures = 0; read(); } }, gt("lobby.retry")))
@@ -124,7 +132,7 @@
             const sinceText = since < 60000 ? gt("lobby.sinceNow") : gt("lobby.sinceMinutes", { minutes: Math.floor(since / 60000) });
             return h("li", { "data-seeker": s.id },
               h("strong", { "data-testid": "seeker-name" }, s.displayName), " ",
-              gt("lobby.rowSince", { settings: gtp("home.settings.classicRules", 10), since: sinceText }), " · ",
+              gt("lobby.rowSince", { settings: settingsText(s), since: sinceText }), " · ",
               `${gt("lobby.rowExpires")} `, h("span", { "data-expires": s.expiresInMs }, minutes(left(s.expiresInMs))), " ",
               h("button", { type: "button", disabled: busy, "data-testid": "pick", "aria-label": gt("lobby.playWith", { name: s.displayName }), onclick: () => pick(s) }, gt("lobby.play")));
           }));

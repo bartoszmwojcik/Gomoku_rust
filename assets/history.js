@@ -17,6 +17,15 @@
     return gt("common.player.guestLabel", { name });
   };
 
+  const detailOf = (e) => {
+    if (e.variant !== "paper") return gt(`history.reason.${e.reason}`);
+    const variant = gt("home.settings.variants.paper");
+    const score = e.scores ? `${e.scores[0]} : ${e.scores[1]}` : "";
+    return e.reason === "points"
+      ? gt("history.paperDetail", { variant, score })
+      : gt("history.paperDetailWithReason", { variant, score, reason: gt(`history.reason.${e.reason}`) });
+  };
+
   const more = async () => {
     if (loading || !next) return;
     loading = true;
@@ -38,7 +47,7 @@
         h("li", { "data-testid": "history-row" },
           h("strong", { "data-testid": "player-name" }, label(e.opponent)), " · ",
           h("span", { "data-result": e.result }, gt(`history.result.${e.result}`)), " · ",
-          gt(`history.reason.${e.reason}`), " · ",
+          detailOf(e), " · ",
           h("time", { datetime: e.finishedAt }, formatDate(e.finishedAt)), " ",
           h("a", { href: `/games/${e.gameId}/review`, "data-testid": "history-review" }, gt("history.review"))))));
     }

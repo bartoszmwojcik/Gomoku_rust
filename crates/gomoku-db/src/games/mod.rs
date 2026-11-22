@@ -9,6 +9,7 @@ mod create;
 mod history;
 mod invite;
 mod lobby;
+pub(crate) mod paper;
 mod play;
 mod rematch;
 mod spectate;
@@ -16,7 +17,7 @@ mod spectate;
 use gomoku_core::clock::{ClockState, deadline_ms, seat_out_of_time};
 use gomoku_core::constants::READY_DEADLINE_MS;
 use gomoku_core::rules::seat_on_turn;
-use gomoku_core::types::{EndReason, GameStatus, Seat};
+use gomoku_core::types::{EndReason, GameStatus, GameVariant, Seat};
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, Row};
 use time::{Duration, OffsetDateTime};
@@ -27,6 +28,7 @@ pub use create::{CreateOutcome, CreatedGame, GuestCreateInput};
 pub use history::{HistoryEntryRow, HistoryPageRows, ReviewRows};
 pub use invite::{AcceptInput, AcceptOutcome, JoinAs, PreviewState, PreviewView, Viewer};
 pub use lobby::{LobbyRows, SeekerRow, SeekingStatus};
+pub use paper::{PaperMoveRow, PaperSnapshot};
 pub use play::{MoveInput, MoveOutcome};
 pub use rematch::{RematchAccepted, RematchOffered};
 pub use spectate::{SpectateJoin, Spectator, SpectatorState};
@@ -68,7 +70,16 @@ pub enum GameError {
     #[error("the opponent has not opened the game")]
     GameNotStarted,
     #[error("not your turn")]
-    NotYourTurn,
+    NotYourTurn { auto: bool },
+    #[error("the first stone goes to the centre")]
+    FirstMoveCenter,
+    #[error("a stone must stand within three fields of another")]
+    MoveTooFar,
+    #[error("the field is off the sheet")]
+    OffBoard,
+    /// A classic move outside the 15x15 board: which parts were out of range.
+    #[error("the move is outside the board")]
+    MoveOutOfRange { x: bool, y: bool, number: bool },
     #[error("stale move")]
     StaleMove,
     #[error("cell occupied")]
@@ -154,11 +165,13 @@ pub struct GameRow {
     pub rematch_game_id: Option<Uuid>,
     pub is_public: bool,
     pub audience_closed: bool,
+    pub variant: GameVariant,
+    pub time_control_ms: i64,
 }
 
 pub(crate) const GAME_COLUMNS: &str = "id, origin, status, created_at, started_at, finished_at, black_seat, move_count, moves, \
      winner_seat, end_reason, clock_ms_1, clock_ms_2, turn_started_at, rematch_state, rematch_offered_by_seat, \
-     rematch_expires_at, rematch_game_id, is_public, audience_closed_at IS NOT NULL AS audience_closed";
+     rematch_expires_at, rematch_game_id, is_public, audience_closed_at IS NOT NULL AS audience_closed, variant, time_control_ms";
 
 fn seat_of(value: Option<i16>) -> Option<Seat> {
     value
@@ -198,10 +211,14 @@ impl GameRow {
             rematch_game_id: row.try_get("rematch_game_id")?,
             is_public: row.try_get("is_public")?,
             audience_closed: row.try_get("audience_closed")?,
+            variant: GameVariant::parse(&row.try_get::<String, _>("variant")?)
+                .ok_or(GameError::Corrupt)?,
+            time_control_ms: i64::from(row.try_get::<i32, _>("time_control_ms")?),
         })
     }
 
-    /// The clock as the pure rules see it: the seat on turn exists only in an active game.
+    /// The clock of a CLASSIC game as the pure rules see it (a paper game's clock comes from its sheet): the seat on turn
+    /// exists only in an active game.
     pub fn clock_state(&self) -> ClockState {
         let turn_seat = match (self.status, self.black_seat) {
             (GameStatus::Active, Some(black)) => Some(seat_on_turn(self.move_count, black)),
@@ -211,7 +228,7 @@ impl GameRow {
             clock_ms: self.clock_ms,
             turn_started_at_ms: self.turn_started_at.map(to_ms),
             turn_seat,
-            time_control_ms: None,
+            time_control_ms: Some(self.time_control_ms),
         }
     }
 }
@@ -278,6 +295,8 @@ pub struct Snapshot {
     pub invitation: Option<InvitationRow>,
     /// Present spectators: only while a public game is in progress.
     pub audience: Option<i64>,
+    /// The sheet of a paper game.
+    pub paper: Option<PaperSnapshot>,
 }
 
 /// What a lazy-closing statement is scoped to.
@@ -424,6 +443,9 @@ pub(crate) async fn settle_game(
     let Some(game) = read_game(conn, game_id).await? else {
         return Ok(false);
     };
+    if game.variant == GameVariant::Paper {
+        return paper::settle_paper(conn, game_id, now).await;
+    }
     let state = game.clock_state();
     let Some(loser) = seat_out_of_time(&state, to_ms(now)) else {
         return Ok(false);
@@ -434,7 +456,7 @@ pub(crate) async fn settle_game(
     let winner = loser.other();
     let sql = format!(
         "UPDATE games SET status = 'finished', winner_seat = $2, end_reason = 'timeout', finished_at = $3, clock_ms_{} = 0 \
-         WHERE id = $1 AND status = 'active' AND move_count = $4 RETURNING id",
+         WHERE id = $1 AND status = 'active' AND variant = 'classic' AND move_count = $4 RETURNING id",
         loser.number()
     );
     let finished = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -461,7 +483,11 @@ pub(crate) async fn settle_expired(
     let Some(game) = read_game(conn, game_id).await? else {
         return Ok(false);
     };
-    if seat_out_of_time(&game.clock_state(), to_ms(now)).is_none() {
+    let due = match game.variant {
+        GameVariant::Paper => paper::paper_is_due(conn, game_id, now).await?,
+        GameVariant::Classic => seat_out_of_time(&game.clock_state(), to_ms(now)).is_some(),
+    };
+    if !due {
         return Ok(false);
     }
     sqlx::query("SELECT id FROM games WHERE id = $1 FOR UPDATE")
@@ -514,12 +540,18 @@ pub(crate) async fn snapshot(
         None
     };
     let audience = audience_of(conn, &game, now).await?;
+    let paper = if game.variant == GameVariant::Paper {
+        paper::load_paper(conn, game_id).await?
+    } else {
+        None
+    };
     Ok(Snapshot {
         game,
         players,
         me,
         invitation,
         audience,
+        paper,
     })
 }
 
