@@ -1,5 +1,6 @@
 //! The player screens carry no Polish literals: every text comes from the catalogs (PL is the source, EN/FR/DE
 //! translate). The administrator's panel (`backend.html`) is Polish by decision and is the only exception.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
 use std::path::Path;
