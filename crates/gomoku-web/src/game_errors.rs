@@ -122,6 +122,13 @@ impl From<GameError> for ApiError {
                 "Z agentem nie ma rewanżu. Utwórz nową partię i przekaż mu nowy kod.",
             )
             .with_data(json!({ "reason": "agent" })),
+            GameError::ShowRunning { game_id, layout } => conflict(
+                "SHOW_RUNNING",
+                "Trwa już pokaz. Zakończ go albo wróć do niego.",
+            )
+            .with_data(json!({ "gameId": game_id, "layout": layout.as_str() })),
+            GameError::ShowEnded => conflict("GAME_NOT_ACTIVE", "Ten pokaz już się zakończył.")
+                .with_data(json!({ "reason": "show_ended" })),
             GameError::LobbySeekerTaken => conflict(
                 "LOBBY_SEEKER_TAKEN",
                 "Ten gracz zagrał już z kimś innym. Wybierz kogoś innego z listy.",

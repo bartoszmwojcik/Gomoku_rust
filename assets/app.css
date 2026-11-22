@@ -86,3 +86,21 @@ ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(-
 [data-testid="agent-card"] summary {
   cursor: pointer;
 }
+
+/* The administrator's panel and the show console: plain and read only. */
+.backend { max-width: 72rem; margin: 0 auto; padding: 1rem; }
+.backend .cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.backend dl { display: grid; grid-template-columns: 1fr auto; gap: 0.25rem 1rem; }
+.backend dd { margin: 0; text-align: right; }
+.backend .table-scroll { overflow-x: auto; }
+.backend table { border-collapse: collapse; width: 100%; }
+.backend th, .backend td { padding: 0.35rem 0.6rem; text-align: left; border-bottom: 1px solid currentColor; }
+
+/* The show: the board beside the rest; the projector view enlarges it and the names. */
+.show-stage { display: grid; gap: 1.5rem; padding: 1rem; grid-template-columns: minmax(0, var(--layout-width-board, 448px)) minmax(0, 1fr); align-items: start; }
+.show-stage .show-board { width: 100%; }
+.show-stage[data-projector] { grid-template-columns: minmax(0, var(--layout-width-board-show, min(80vh, 960px))) minmax(0, 1fr); font-size: 1.5rem; }
+.show-stage[data-projector] .clock { font-size: 2rem; }
+@media (max-width: 900px) { .show-stage, .show-stage[data-projector] { grid-template-columns: minmax(0, 1fr); } }
+main:has(.show-stage) { max-width: none; }
+.show-side input[type="checkbox"] { width: auto; min-width: 0; height: auto; }

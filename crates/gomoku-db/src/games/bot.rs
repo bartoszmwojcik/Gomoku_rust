@@ -24,6 +24,12 @@ pub struct BotTurn {
     pub moves: Vec<usize>,
     /// The bot's clock at `now`.
     pub remaining_ms: i64,
+    /// A show: the move waits for a pause counted from the start of the turn, and searches with show limits.
+    pub is_show: bool,
+    /// The bot's stored clock at the start of its turn.
+    pub clock_at_turn_start_ms: i64,
+    /// Time since the turn started (`None` before the clock started).
+    pub elapsed_ms: Option<i64>,
 }
 
 /// Why a read found nothing to do, or the due move.
@@ -45,24 +51,34 @@ impl Database {
         let Some(game) = read_game(&mut conn, game_id).await? else {
             return Ok(BotTurnRead::Idle);
         };
-        let bot = sqlx::query(
-            "SELECT id, seat, bot_level, bot_memory_mb, bot_depth_cap FROM game_players WHERE game_id = $1 AND kind = 'bot'",
+        let bots = sqlx::query(
+            "SELECT id, seat, bot_level, bot_memory_mb, bot_depth_cap FROM game_players WHERE game_id = $1 AND kind = 'bot' ORDER BY seat",
         )
         .bind(game_id)
-        .fetch_optional(&mut *conn)
+        .fetch_all(&mut *conn)
         .await?;
-        let (Some(bot), Some(black)) = (bot, game.black_seat) else {
+        let Some(black) = game.black_seat else {
             return Ok(BotTurnRead::Idle);
         };
-        let seat = Seat::from_number(
-            u8::try_from(bot.try_get::<i16, _>("seat")?).map_err(|_| GameError::Corrupt)?,
-        )
-        .ok_or(GameError::Corrupt)?;
+        // Of the bots of the game (a show has two) the one on turn.
+        let on_turn = seat_on_turn(game.move_count, black);
+        let mut found = None;
+        for row in bots {
+            let seat = Seat::from_number(
+                u8::try_from(row.try_get::<i16, _>("seat")?).map_err(|_| GameError::Corrupt)?,
+            )
+            .ok_or(GameError::Corrupt)?;
+            if seat == on_turn {
+                found = Some((row, seat));
+            }
+        }
+        let Some((bot, seat)) = found else {
+            return Ok(BotTurnRead::Idle);
+        };
         let due = game.status == GameStatus::Active
             && game.variant == GameVariant::Classic
             && game.turn_started_at.is_some()
-            && game.move_count < 225
-            && seat_on_turn(game.move_count, black) == seat;
+            && game.move_count < 225;
         if !due {
             return Ok(BotTurnRead::Idle);
         }
@@ -79,6 +95,11 @@ impl Database {
                 .map(i32::from),
             moves: decode_moves(&game.moves).map_err(|_| GameError::Corrupt)?,
             remaining_ms: remaining_ms(&state, seat, to_ms(now)),
+            is_show: game.origin == "show",
+            clock_at_turn_start_ms: game.clock_ms[seat.index()],
+            elapsed_ms: game
+                .turn_started_at
+                .map(|at| (to_ms(now) - to_ms(at)).max(0)),
         })))
     }
 

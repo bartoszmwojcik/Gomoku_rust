@@ -1,5 +1,6 @@
 //! The Gomoku web application: Axum routes, Askama pages, middleware.
 
+pub mod admin;
 pub mod admin_cli;
 pub mod api;
 pub mod app;
@@ -15,6 +16,7 @@ pub mod health;
 pub mod i18n;
 pub mod mcp;
 pub mod pages;
+pub mod pages_admin;
 pub mod pages_games;
 pub mod password;
 pub mod routes_account;
@@ -24,6 +26,7 @@ pub mod routes_email;
 pub mod routes_games;
 pub mod routes_lobby;
 pub mod routes_password;
+pub mod routes_show;
 pub mod routes_spectate;
 pub mod security;
 pub mod server;

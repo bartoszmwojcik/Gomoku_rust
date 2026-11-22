@@ -198,5 +198,22 @@
   const formatDate = (iso) =>
     new Intl.DateTimeFormat(window.GT.lang, { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Warsaw" }).format(new Date(iso));
 
-  window.Gomoku = { api, h, formatClock, cellName, cellParts, stonesOf, createBoard, outcomeOf, neutralOutcomeOf, playerLabel, formatDate, SIZE };
+  /** A modal question; `onConfirm` resolves to `true` (done) or a text to show when it failed. */
+  const confirmDialog = ({ title, text, confirm, cancel, onConfirm, testid }) => {
+    const dialog = h("dialog", { class: "dialog", "data-testid": testid });
+    const error = h("p", { role: "alert" }, "");
+    const back = h("button", { type: "button", autofocus: true, onclick: () => dialog.close() }, cancel);
+    const yes = h("button", { type: "button", class: "danger", "data-testid": `${testid}-confirm`, onclick: async () => {
+      yes.disabled = true;
+      const outcome = await onConfirm();
+      if (outcome === true) dialog.close(); else { yes.disabled = false; error.textContent = outcome || ""; }
+    } }, confirm);
+    dialog.append(h("h2", null, title), h("p", null, text), error, h("div", { class: "actions" }, back, yes));
+    document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove());
+    dialog.showModal();
+    back.focus();
+  };
+
+  window.Gomoku = { confirmDialog, api, h, formatClock, cellName, cellParts, stonesOf, createBoard, outcomeOf, neutralOutcomeOf, playerLabel, formatDate, SIZE };
 })();

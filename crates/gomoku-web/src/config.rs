@@ -159,6 +159,53 @@ impl McpConfig {
     }
 }
 
+/// Show mode (`SHOW_*`, `BOT_SHOW_*`): the administrator's bot show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowConfig {
+    pub enabled: bool,
+    pub bot_vs_bot_enabled: bool,
+    /// Level 2 in a bot vs bot show (a bot vs agent show needs only the bot switch).
+    pub bot_level2_enabled: bool,
+    pub pause_min_ms: i64,
+    pub pause_max_ms: i64,
+    pub bot_l2_soft_ms: i64,
+}
+
+impl Default for ShowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_vs_bot_enabled: false,
+            bot_level2_enabled: false,
+            pause_min_ms: 1000,
+            pause_max_ms: 2000,
+            bot_l2_soft_ms: DEFAULT_BOT_TIME_LIMITS.level2.soft_ms,
+        }
+    }
+}
+
+impl ShowConfig {
+    fn from_lookup(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let defaults = Self::default();
+        let pause_max_ms = ranged(lookup, "BOT_SHOW_PAUSE_MAX_MS", 0, 8000)?
+            .map_or(defaults.pause_max_ms, |n| n as i64);
+        let pause_min_ms = ranged(lookup, "BOT_SHOW_PAUSE_MIN_MS", 0, 8000)?
+            .map_or_else(|| defaults.pause_min_ms.min(pause_max_ms), |n| n as i64);
+        if pause_min_ms > pause_max_ms {
+            return Err(ConfigError::Invalid("BOT_SHOW_PAUSE_MIN_MS"));
+        }
+        Ok(Self {
+            enabled: flag(lookup, "SHOW_ENABLED")?,
+            bot_vs_bot_enabled: flag(lookup, "SHOW_BOT_VS_BOT_ENABLED")?,
+            bot_level2_enabled: flag(lookup, "SHOW_BOT_LEVEL2_ENABLED")?,
+            pause_min_ms,
+            pause_max_ms,
+            bot_l2_soft_ms: ranged(lookup, "SHOW_BOT_L2_SOFT_MS", 1, 60_000)?
+                .map_or(defaults.bot_l2_soft_ms, |n| n as i64),
+        })
+    }
+}
+
 /// The hosted bot (`BOT_*`): admission, capacity and the per-move time limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BotConfig {
@@ -261,6 +308,7 @@ pub struct AppConfig {
     pub chat: ChatConfig,
     pub bot: BotConfig,
     pub mcp: McpConfig,
+    pub show: ShowConfig,
 }
 
 /// An integer setting in `min..=max` written as plain digits; unset or empty means the default.
@@ -386,6 +434,13 @@ impl AppConfig {
             max_messages_per_game: ranged(&lookup, "CHAT_MAX_MESSAGES_PER_GAME", 1, 100_000)?
                 .map_or(chat_defaults.max_messages_per_game, |n| n as usize),
         };
+        let admin_email = lookup("ADMIN_EMAIL")
+            .map(|raw| gomoku_core::validators::normalize_email(&raw))
+            .filter(|email| !email.is_empty());
+        // Without the administrator the show and the panel are unreachable and nobody can reclaim them: refuse to start.
+        if production && admin_email.is_none() {
+            return Err(ConfigError::RequiredInProduction("ADMIN_EMAIL"));
+        }
         Ok(Self {
             bind_addr,
             assets_dir,
@@ -396,12 +451,11 @@ impl AppConfig {
             session_cookie_secure,
             password,
             email,
-            admin_email: lookup("ADMIN_EMAIL")
-                .map(|raw| gomoku_core::validators::normalize_email(&raw))
-                .filter(|email| !email.is_empty()),
+            admin_email,
             chat,
             bot: BotConfig::from_lookup(&lookup)?,
             mcp: McpConfig::from_lookup(&lookup)?,
+            show: ShowConfig::from_lookup(&lookup)?,
         })
     }
 }
@@ -419,10 +473,11 @@ mod tests {
         }
     }
 
-    const PRODUCTION: [(&str, &str); 3] = [
+    const PRODUCTION: [(&str, &str); 4] = [
         ("APP_ENV", "production"),
         ("APP_ORIGIN", "https://gomoku.example"),
         ("TRUST_PROXY_HOPS", "1"),
+        ("ADMIN_EMAIL", "admin@example.com"),
     ];
 
     #[test]
@@ -623,6 +678,15 @@ mod tests {
             AppConfig::from_lookup(env(&[("APP_ENV", "production"), ("TRUST_PROXY_HOPS", "1")])),
             Err(ConfigError::RequiredInProduction("APP_ORIGIN"))
         );
+        let without_admin: Vec<_> = PRODUCTION
+            .iter()
+            .copied()
+            .filter(|(k, _)| *k != "ADMIN_EMAIL")
+            .collect();
+        assert_eq!(
+            AppConfig::from_lookup(env(&without_admin)),
+            Err(ConfigError::RequiredInProduction("ADMIN_EMAIL"))
+        );
         assert_eq!(
             AppConfig::from_lookup(env(&[
                 ("APP_ENV", "production"),
@@ -722,6 +786,7 @@ mod tests {
             ("APP_ENV", "production"),
             ("APP_ORIGIN", "http://localhost:3000"),
             ("TRUST_PROXY_HOPS", "1"),
+            ("ADMIN_EMAIL", "admin@example.com"),
             ("EMAIL_TRANSPORT", "file"),
         ]))
         .unwrap();

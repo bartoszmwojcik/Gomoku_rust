@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Przegląd — Panel Gomoku</title>
+  <link rel="stylesheet" href="/assets/game-tokens.css">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<main class="backend">
+  <h1>Panel administracyjny</h1>
+  <p><a href="/show" data-testid="show-link">Pokaz partii botów (strona administratora)</a></p>
+  {% if data_error %}
+  <section class="alert danger" role="alert"><strong>Nie udało się wczytać danych</strong> Sprawdź logi serwera.</section>
+  {% else %}
+  <div class="cards" data-testid="cards">
+    {% for card in cards %}
+    <section class="card" data-testid="card">
+      <h2>{{ card.title }}</h2>
+      <p>{{ card.description }}</p>
+      <dl>
+        {% for row in card.rows %}<dt>{{ row.0 }}</dt><dd>{{ row.1 }}</dd>{% endfor %}
+      </dl>
+    </section>
+    {% endfor %}
+  </div>
+  <section aria-labelledby="accounts-h">
+    <h2 id="accounts-h">Konta</h2>
+    <form action="/backend" method="get" role="search">
+      <label for="account-search">Szukaj po nazwie gracza</label>
+      <input id="account-search" name="q" type="search" maxlength="24" autocomplete="off" value="{{ query_q }}">
+      {% if sort_is_name %}<input type="hidden" name="sort" value="name">{% endif %}
+      <button type="submit">Szukaj</button>
+    </form>
+    {% if rows.is_empty() %}
+    <p data-testid="accounts-empty">Brak kont pasujących do wyszukiwania.</p>
+    {% else %}
+    <div role="region" aria-label="Lista kont" tabindex="0" class="table-scroll">
+      <table data-testid="accounts">
+        <caption class="sr-only">Konta graczy</caption>
+        <thead><tr>
+          <th scope="col" aria-sort="{{ name_aria }}"><a href="{{ name_href }}">Nazwa</a></th>
+          <th scope="col">E-mail</th>
+          <th scope="col">E-mail potwierdzony</th>
+          <th scope="col" aria-sort="{{ created_aria }}"><a href="{{ created_href }}">Założone</a></th>
+          <th scope="col">Partie</th>
+          <th scope="col">Rola</th>
+        </tr></thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td>{{ row.email }}</td>
+            <td>{{ row.verified }}</td>
+            <td><time datetime="{{ row.created_iso }}">{{ row.created_text }}</time></td>
+            <td style="text-align:right">{{ row.finished }}</td>
+            <td>{{ row.role }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    <nav aria-label="Strony listy kont">
+      <span>Strona {{ page }} z {{ page_count }} ({{ total }} kont)</span>
+      {% if let Some(href) = prev_href %}<a href="{{ href }}" rel="prev">Poprzednia</a>{% endif %}
+      {% if let Some(href) = next_href %}<a href="{{ href }}" rel="next">Następna</a>{% endif %}
+    </nav>
+  </section>
+  {% endif %}
+  <section class="card" data-testid="database-card">
+    <h2>Baza danych</h2>
+    <p>PostgreSQL</p>
+    {% if db_ok %}<p><strong>Połączono</strong></p>{% else %}<p role="alert"><strong>Brak połączenia</strong> Sprawdź logi serwera.</p>{% endif %}
+  </section>
+  <section class="card" data-testid="rules-card">
+    <h2>Zasady gry</h2>
+    <p>Konfiguracja z gomoku-core</p>
+    <table><thead><tr><th scope="col">Parametr</th><th scope="col">Wartość</th></tr></thead>
+    <tbody><tr><td>Rozmiar planszy</td><td>15×15</td></tr><tr><td>Kamieni w linii do wygranej</td><td>5</td></tr></tbody></table>
+  </section>
+</main>
+</body>
+</html>

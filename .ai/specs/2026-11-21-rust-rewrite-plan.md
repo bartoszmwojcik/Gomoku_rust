@@ -294,3 +294,21 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
   JSON-RPC; brak `listChanged`; `MCP_POLL_INTERVAL_MS` jako pokrętło (domyślnie 1000) dla testów; bez `join_channel`; opisy i błędy MCP po polsku (jak w Node).
 - Nie zrobione / nie sprawdzono: pełna partia prawdziwym modelem (sprawdzone tylko połączenie i ręczne wywołania narzędzi przez HTTP), zachowanie za
   proxy produkcyjnym (wymaga nagłówka `Host`), globalny limit czekających `get_state` (brak w Node), tryb pokazu bot–agent (F8), dotyk/mobile.
+
+### F8 — Admin i pokaz (zrobione, jeden PR)
+
+- Kontrakt: `.ai/docs/2026-11-22-f8-contract.md`. Decyzje (domyślne z kontraktu): napęd pokazu przez odczyty (bez pętli po stronie serwera, jak w Node),
+  poziom 2 w bot–bot za flagą `SHOW_BOT_LEVEL2_ENABLED` (domyślnie wyłączony), `ADMIN_EMAIL` wymagany w produkcji, `/backend` tylko po polsku, bez CLI `stats`.
+- Administrator: konto z `ADMIN_EMAIL` i potwierdzonym adresem, decyzja przy każdym żądaniu, bez roli w bazie. Dwie bramki: strony dają zwykłe 404,
+  API `NOT_FOUND`; **bramka działa przed CSRF** (POST bez `Origin` od obcego to 404, od administratora 403).
+- `/backend` (tylko GET): liczniki kont i partii (pokazy wyłączone z zapytań), trwałe liczniki par (`game_pair_counters`, dziś/7 dni/razem w Warszawie),
+  lista kont z wyszukiwaniem po prefiksie nazwy (nigdy po e-mailu), sortowaniem i stronicowaniem po 25, karty bazy i zasad. `finished_stats` i `admin` w core.
+- Pokaz: migracja 0010 (`origin = 'show'`, bot może siedzieć na miejscu 1), `show_create/read/end/current` w `gomoku-db`, `/api/show*`, `/show` (konsola: układ, poziomy,
+  sprawdzenie „czy wystartuje” z próbnym ruchem silnika, start, zakończenie) i `/show/{id}` (plansza, zegary, wskaźnik napędu, widok pod projektor, karta agenta z ukrytym kodem).
+  Bot w pokazie czeka deterministyczną pauzę (`show_pause_ms`, przycięta do 1/4 zegara) liczoną od początku tury; limity czasu pokazu; `bot_turn_due` czyta wszystkich botów i wybiera tego na ruchu.
+- Bot kontra agent: kod pokazu jest dla przeglądarki nieznany (`INVALID_INVITATION`), `join` agenta daje `opponent.kind = "bot"` i startuje zegar, `get_state` agenta napędza bota
+  tylko w pokazie. Pokaz nigdy nie wchodzi do liczników, historii ani przeglądu (`record_finished` pomija `origin = 'show'`).
+- Odstępstwa: `BOT_TERMINATE_WAIT_MS` bez znaczenia (silnik współpracuje); próba silnika w preflight liczy czas całego wyszukiwania; `show.room.drive.reason.silent` używa `{count}` zamiast `{seconds}`
+  (PL ma lekką usterkę gramatyczną z Node w formie „1 sekundy” — zostawiona); token `--layout-width-board-show` już istniał w `game-tokens.css`.
+- Nie zrobione / nie sprawdzono: strojenie tempa pokazu (T1–T3) i poziom 2 w bot–bot na Ruście, `bot-bench --show`, zachowanie napędu w tle karty na prawdziwym projektorze,
+  Wake Lock w prawdziwych przeglądarkach (w teście headless go nie ma), dotyk/mobile, pełny pokaz bot–agent z prawdziwym modelem.

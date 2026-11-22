@@ -24,7 +24,7 @@ use crate::routes_lobby::{fetch_history, lobby_json};
 use crate::session::{current_user, require_page_session};
 
 /// JSON for a `<script type="application/json">` block: no `<` can end the element.
-fn script_json(value: &Value) -> String {
+pub(crate) fn script_json(value: &Value) -> String {
     value.to_string().replace('<', "\\u003c")
 }
 

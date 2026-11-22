@@ -563,6 +563,7 @@ async fn a_secure_deployment_uses_the_host_prefixed_cookie() {
         ("APP_ENV", "production"),
         ("APP_ORIGIN", "https://gomoku.example"),
         ("TRUST_PROXY_HOPS", "1"),
+        ("ADMIN_EMAIL", "admin@example.com"),
     ])
     .await;
     let mut client = app.client();

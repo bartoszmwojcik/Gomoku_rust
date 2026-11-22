@@ -284,6 +284,10 @@ pub fn spectator_view(
                 "kind": p.kind,
                 "displayName": display_name_of(p.is_guest(), p.seat, p.nickname.as_deref(), p.display_name.as_deref(), p.current_name.as_deref()),
             });
+            if let Some(bot) = bot_json(p) {
+                player["displayName"] = bot["name"].clone();
+                player["bot"] = bot["bot"].clone();
+            }
             if p.kind == "agent" {
                 player["agentName"] = json!(p.agent_name);
             }
