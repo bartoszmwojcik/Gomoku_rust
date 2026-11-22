@@ -34,6 +34,7 @@ struct PlayPage {
     ctx: Ctx,
     signed_in: bool,
     hint: String,
+    bot_enabled: bool,
 }
 
 #[derive(askama::Template)]
@@ -116,9 +117,14 @@ pub async fn play(State(state): State<AppState>, Lang(locale): Lang, jar: Cookie
     let tr = state.catalogs.translator(locale);
     let hint = tr.t_with("home.shared.nicknameHint", &[("seat", "1")]);
     render(&PlayPage {
-        ctx: Ctx::new(tr, user, "/play").with_bag(&["errors.api.", "home.settings."]),
+        ctx: Ctx::new(tr, user, "/play").with_bag(&[
+            "errors.api.",
+            "home.settings.",
+            "home.opponent.",
+        ]),
         signed_in,
         hint,
+        bot_enabled: state.bot.config.enabled,
     })
 }
 
@@ -447,7 +453,10 @@ pub async fn history(
     };
     let ctx = Ctx::new(state.catalogs.translator(locale), Some(user), "/history");
     let ctx = Ctx {
-        bag: merge_bag(&ctx, &["history.", "game.outcome.", "game.shared."]),
+        bag: merge_bag(
+            &ctx,
+            &["common.", "history.", "game.outcome.", "game.shared."],
+        ),
         ..ctx
     };
     render(&HistoryPage {
@@ -533,11 +542,16 @@ pub async fn review(
         .players
         .iter()
         .map(|p| {
-            json!({
+            let mut player = json!({
                 "seat": p.seat.number(),
                 "kind": p.kind,
                 "displayName": gomoku_core::game::display_name_of(p.is_guest(), p.seat, p.nickname.as_deref(), p.display_name.as_deref(), p.current_name.as_deref()),
-            })
+            });
+            if let Some(bot) = crate::game_view::bot_json(p) {
+                player["displayName"] = bot["name"].clone();
+                player["bot"] = bot["bot"].clone();
+            }
+            player
         })
         .collect();
     let data = json!({
@@ -556,6 +570,7 @@ pub async fn review(
         bag: merge_bag(
             &ctx,
             &[
+                "common.",
                 "review.",
                 "history.reason.",
                 "game.outcome.",

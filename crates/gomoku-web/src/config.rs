@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use gomoku_core::bot::budget::{BotTimeLimits, DEFAULT_BOT_TIME_LIMITS, TimeLimit};
+use gomoku_core::bot::profile::BOT_MIN_MEMORY_MB;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -98,6 +100,89 @@ impl Default for ChatConfig {
     }
 }
 
+/// The hosted bot (`BOT_*`): admission, capacity and the per-move time limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotConfig {
+    pub enabled: bool,
+    pub max_active_games: u32,
+    pub min_available_mb: i64,
+    pub fixed_memory_mb: Option<i64>,
+    pub limits: BotTimeLimits,
+}
+
+impl Default for BotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_active_games: 3,
+            min_available_mb: BOT_MIN_MEMORY_MB,
+            fixed_memory_mb: None,
+            limits: DEFAULT_BOT_TIME_LIMITS,
+        }
+    }
+}
+
+/// `true` / `false` / unset (false); anything else is an error.
+fn flag(lookup: &impl Fn(&str) -> Option<String>, name: &'static str) -> Result<bool, ConfigError> {
+    match lookup(name).as_deref() {
+        None | Some("") | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => Err(ConfigError::Invalid(name)),
+    }
+}
+
+/// A soft and ceiling pair: each 1..60000, the ceiling not below the soft limit; the default ceiling follows the soft.
+fn time_limit(
+    lookup: &impl Fn(&str) -> Option<String>,
+    soft_name: &'static str,
+    ceiling_name: &'static str,
+    default: TimeLimit,
+) -> Result<TimeLimit, ConfigError> {
+    let soft = ranged(lookup, soft_name, 1, 60_000)?.map_or(default.soft_ms, |n| n as i64);
+    let ceiling =
+        ranged(lookup, ceiling_name, 1, 60_000)?.map_or(default.ceiling_ms.max(soft), |n| n as i64);
+    if ceiling < soft {
+        return Err(ConfigError::Invalid(ceiling_name));
+    }
+    Ok(TimeLimit {
+        soft_ms: soft,
+        ceiling_ms: ceiling,
+    })
+}
+
+impl BotConfig {
+    fn from_lookup(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let defaults = Self::default();
+        Ok(Self {
+            enabled: flag(lookup, "BOT_ENABLED")?,
+            max_active_games: ranged(lookup, "BOT_MAX_ACTIVE_GAMES", 1, 1000)?
+                .map_or(defaults.max_active_games, |n| n as u32),
+            min_available_mb: ranged(
+                lookup,
+                "BOT_MIN_AVAILABLE_MB",
+                BOT_MIN_MEMORY_MB as u64,
+                32_767,
+            )?
+            .map_or(defaults.min_available_mb, |n| n as i64),
+            fixed_memory_mb: ranged(lookup, "BOT_FIXED_MEMORY_MB", 1, 1_000_000)?.map(|n| n as i64),
+            limits: BotTimeLimits {
+                level1: time_limit(
+                    lookup,
+                    "BOT_L1_SOFT_MS",
+                    "BOT_L1_CEILING_MS",
+                    DEFAULT_BOT_TIME_LIMITS.level1,
+                )?,
+                level2: time_limit(
+                    lookup,
+                    "BOT_L2_SOFT_MS",
+                    "BOT_L2_CEILING_MS",
+                    DEFAULT_BOT_TIME_LIMITS.level2,
+                )?,
+            },
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
@@ -115,6 +200,7 @@ pub struct AppConfig {
     /// address never changes through the app. Optional until the administrator panel arrives.
     pub admin_email: Option<String>,
     pub chat: ChatConfig,
+    pub bot: BotConfig,
 }
 
 /// An integer setting in `min..=max` written as plain digits; unset or empty means the default.
@@ -254,6 +340,7 @@ impl AppConfig {
                 .map(|raw| gomoku_core::validators::normalize_email(&raw))
                 .filter(|email| !email.is_empty()),
             chat,
+            bot: BotConfig::from_lookup(&lookup)?,
         })
     }
 }
@@ -276,6 +363,78 @@ mod tests {
         ("APP_ORIGIN", "https://gomoku.example"),
         ("TRUST_PROXY_HOPS", "1"),
     ];
+
+    #[test]
+    fn bot_defaults_and_overrides() {
+        let off = AppConfig::from_lookup(env(&[])).unwrap().bot;
+        assert_eq!(off, BotConfig::default());
+        assert!(!off.enabled);
+        assert_eq!(
+            (off.limits.level1.soft_ms, off.limits.level1.ceiling_ms),
+            (50, 250)
+        );
+        assert_eq!(
+            (off.limits.level2.soft_ms, off.limits.level2.ceiling_ms),
+            (1500, 3000)
+        );
+        let on = AppConfig::from_lookup(env(&[
+            ("BOT_ENABLED", "true"),
+            ("BOT_MAX_ACTIVE_GAMES", "7"),
+            ("BOT_MIN_AVAILABLE_MB", "512"),
+            ("BOT_FIXED_MEMORY_MB", "2048"),
+            ("BOT_L1_SOFT_MS", "400"),
+            ("BOT_L2_SOFT_MS", "5000"),
+            ("BOT_L2_CEILING_MS", "6000"),
+        ]))
+        .unwrap()
+        .bot;
+        assert!(on.enabled);
+        assert_eq!(
+            (on.max_active_games, on.min_available_mb, on.fixed_memory_mb),
+            (7, 512, Some(2048))
+        );
+        // The default ceiling follows a raised soft limit.
+        assert_eq!(
+            (on.limits.level1.soft_ms, on.limits.level1.ceiling_ms),
+            (400, 400)
+        );
+        assert_eq!(
+            (on.limits.level2.soft_ms, on.limits.level2.ceiling_ms),
+            (5000, 6000)
+        );
+        assert!(
+            !AppConfig::from_lookup(env(&[("BOT_ENABLED", "false")]))
+                .unwrap()
+                .bot
+                .enabled
+        );
+    }
+
+    #[test]
+    fn bot_settings_are_validated() {
+        for (name, value) in [
+            ("BOT_ENABLED", "yes"),
+            ("BOT_MAX_ACTIVE_GAMES", "0"),
+            ("BOT_MIN_AVAILABLE_MB", "255"),
+            ("BOT_MIN_AVAILABLE_MB", "32768"),
+            ("BOT_FIXED_MEMORY_MB", "0"),
+            ("BOT_L1_SOFT_MS", "60001"),
+            ("BOT_L2_SOFT_MS", "abc"),
+        ] {
+            assert_eq!(
+                AppConfig::from_lookup(env(&[(name, value)])),
+                Err(ConfigError::Invalid(name)),
+                "{name}={value}"
+            );
+        }
+        assert_eq!(
+            AppConfig::from_lookup(env(&[
+                ("BOT_L1_SOFT_MS", "300"),
+                ("BOT_L1_CEILING_MS", "200")
+            ])),
+            Err(ConfigError::Invalid("BOT_L1_CEILING_MS"))
+        );
+    }
 
     #[test]
     fn uses_development_defaults() {

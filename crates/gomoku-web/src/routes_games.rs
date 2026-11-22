@@ -8,6 +8,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
 use gomoku_core::auth::FieldIssue;
+use gomoku_core::bot::choose_move::BotLevel;
+use gomoku_core::bot::opponent::{Opponent, OpponentChoice, OpponentIssue, resolve_opponent};
+use gomoku_core::bot::profile::bot_display_name;
 use gomoku_core::constants::{
     CREATE_GAME_LIMIT, CREATE_GAME_WINDOW_MS, INVITATION_LOOKUP_GLOBAL_LIMIT,
     INVITATION_LOOKUP_LIMIT, INVITATION_LOOKUP_WINDOW_MS, INVITATION_TTL_MS, REMATCH_OFFER_LIMIT,
@@ -23,7 +26,8 @@ use gomoku_core::paper::{
 };
 use gomoku_core::types::GameVariant;
 use gomoku_db::games::{
-    AcceptInput, CreatedGame, GameError, GuestCreateInput, JoinAs, MoveInput, Snapshot, to_ms,
+    AcceptInput, BotSeat, CreatedGame, GameError, GuestCreateInput, JoinAs, MoveInput, Snapshot,
+    to_ms,
 };
 use gomoku_db::{OffsetDateTime, Uuid};
 use serde_json::{Value, json};
@@ -32,6 +36,7 @@ use crate::api::{
     ApiError, bool_field, int_field, ok, read_json, read_optional_json, string_field,
 };
 use crate::app::AppState;
+use crate::bot::{bot_on_turn, schedule_bot_turn};
 use crate::client_address::client_address;
 use crate::game_view::{game_view, iso_ms};
 use crate::guest::{guest_cookie, guest_cookie_default, guest_token, guest_token_hash, refreshed};
@@ -183,6 +188,77 @@ pub(crate) fn game_settings(body: &Value) -> Result<GameSettings, ApiError> {
     })
 }
 
+/// `opponent` and `botLevel` of a create body (shape first, then the relations between the fields and the variant).
+fn opponent_choice(
+    body: &Value,
+    settings: &GameSettings,
+    is_public: bool,
+) -> Result<OpponentChoice, ApiError> {
+    let opponent = match body.get("opponent") {
+        None => Field::Absent,
+        Some(Value::String(text)) => Opponent::parse(text).map_or(Field::Invalid, Field::Valid),
+        Some(_) => Field::Invalid,
+    };
+    let level = match body.get("botLevel") {
+        None => Field::Absent,
+        Some(value) => value
+            .as_i64()
+            .and_then(BotLevel::from_number)
+            .map_or(Field::Invalid, Field::Valid),
+    };
+    resolve_opponent(opponent, level, settings.variant, is_public).map_err(|issues| {
+        let mut error = ApiError::validation("Nieprawidłowe dane.");
+        for issue in issues {
+            error = match issue {
+                OpponentIssue::OpponentInvalid => {
+                    error.with_field("opponent", "invalid_value", "Nieprawidłowy przeciwnik.")
+                }
+                OpponentIssue::LevelInvalid => {
+                    error.with_field("botLevel", "invalid_union", "Nieprawidłowy poziom bota.")
+                }
+                OpponentIssue::LevelWithoutBot => error.with_field(
+                    "botLevel",
+                    "BOT_LEVEL_WITHOUT_BOT",
+                    "Poziom bota wybiera się tylko w partii z botem.",
+                ),
+                OpponentIssue::LevelRequired => {
+                    error.with_field("botLevel", "BOT_LEVEL_REQUIRED", "Wybierz poziom bota.")
+                }
+                OpponentIssue::VariantUnsupported => error.with_field(
+                    "opponent",
+                    "BOT_VARIANT_UNSUPPORTED",
+                    "Bot gra tylko w wariancie klasycznym.",
+                ),
+                OpponentIssue::PublicNotAllowed => error.with_field(
+                    "isPublic",
+                    "BOT_PUBLIC",
+                    "Partia z botem nie może być publiczna.",
+                ),
+            };
+        }
+        error
+    })
+}
+
+/// The bot's seat for a game: strength frozen from the admission, colours drawn.
+fn bot_seat(strength: gomoku_core::bot::budget::BotStrength) -> BotSeat {
+    BotSeat {
+        level: strength.level.number(),
+        memory_mb: strength.memory_mb.and_then(|m| i16::try_from(m).ok()),
+        depth_cap: strength.depth_cap.and_then(|c| i16::try_from(c).ok()),
+        black_seat: draw_black_seat(random_int),
+    }
+}
+
+fn bot_game_json(game_id: Uuid, seat: &BotSeat) -> Value {
+    let level = BotLevel::from_number(i64::from(seat.level)).unwrap_or(BotLevel::One);
+    json!({
+        "gameId": game_id,
+        "opponent": "bot",
+        "bot": { "level": seat.level, "name": bot_display_name(level, seat.memory_mb.map(i64::from)) },
+    })
+}
+
 fn new_code() -> String {
     generate_invitation_code(random_int)
 }
@@ -202,6 +278,11 @@ pub async fn create_game(
         let body = read_optional_json(body, &headers).await?;
         let is_public = public_flag(&body)?;
         let settings = game_settings(&body)?;
+        let choice = opponent_choice(&body, &settings, is_public)?;
+        let strength = match choice {
+            OpponentChoice::Bot(level) => Some(state.bot.admit(&state, level).await?),
+            OpponentChoice::Human => None,
+        };
         rate_limit(
             &state,
             &format!("games-create:{}", user.id),
@@ -209,6 +290,11 @@ pub async fn create_game(
             CREATE_GAME_WINDOW_MS as i64,
         )
         .await?;
+        if let Some(strength) = strength {
+            let seat = bot_seat(strength);
+            let game_id = state.db.create_bot_game_account(user.id, seat, now).await?;
+            return Ok((jar, ok(StatusCode::CREATED, bot_game_json(game_id, &seat))));
+        }
         let created = state
             .db
             .create_game_account(
@@ -231,6 +317,11 @@ pub async fn create_game(
         .map_err(|_| {
             ApiError::internal_logged("client address", &"unavailable behind the proxy")
         })?;
+    let choice = opponent_choice(&body, &settings, is_public)?;
+    let strength = match choice {
+        OpponentChoice::Bot(level) => Some(state.bot.admit(&state, level).await?),
+        OpponentChoice::Human => None,
+    };
     rate_limit(
         &state,
         &key,
@@ -241,6 +332,17 @@ pub async fn create_game(
     // One browser, one slot: the token the browser already carries is reused, else a fresh one.
     let token = guest_token(&jar, secure).unwrap_or_else(new_opaque_token);
     let hash = hash_opaque_token(&token);
+    if let Some(strength) = strength {
+        let seat = bot_seat(strength);
+        let cancel_own = bool_field(&body, "cancelOwnWaitingGame") == Some(true);
+        let game_id = state
+            .db
+            .create_bot_game_guest(&hash, nickname.as_deref(), cancel_own, seat, now)
+            .await?;
+        let max_age = guest_cookie_max_age(None, to_ms(now));
+        let jar = jar.add(guest_cookie(secure, token, max_age));
+        return Ok((jar, ok(StatusCode::CREATED, bot_game_json(game_id, &seat))));
+    }
     let input = GuestCreateInput {
         token_hash: &hash,
         nickname: nickname.as_deref(),
@@ -332,6 +434,9 @@ pub async fn get_game(
             jar = jar.add(guest_cookie_default(secure, derived));
         }
     }
+    if bot_on_turn(&snapshot) {
+        schedule_bot_turn(&state, participant.game_id);
+    }
     let response = view_response(&state, &snapshot, after, now)?;
     Ok((jar, response))
 }
@@ -395,6 +500,9 @@ pub async fn post_move(
         .db
         .play_move(participant.player_id, participant.game_id, input, now)
         .await?;
+    if bot_on_turn(&snapshot) {
+        schedule_bot_turn(&state, participant.game_id);
+    }
     let response = view_response(&state, &snapshot, input.move_number - 1, now)?;
     Ok((refresh_guest(&state, jar, &participant), response))
 }

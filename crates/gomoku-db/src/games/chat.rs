@@ -101,7 +101,7 @@ async fn player_context(
 ) -> Result<Context, GameError> {
     let row = sqlx::query(
         "SELECT p.chat_enabled AS mine, o.chat_enabled AS theirs, g.status, g.is_public, \
-           EXISTS (SELECT 1 FROM game_players d WHERE d.game_id = g.id AND d.kind = 'account' AND d.user_id IS NULL) AS gone, \
+           EXISTS (SELECT 1 FROM game_players d WHERE d.game_id = g.id AND (d.kind = 'bot' OR (d.kind = 'account' AND d.user_id IS NULL))) AS gone, \
            (g.status = 'finished' AND g.finished_at > now() - ($3::float8 * interval '1 millisecond')) AS window_open, \
            (SELECT extract(epoch FROM clock_timestamp() - max(m.created_at)) * 1000 FROM chat_messages m WHERE m.sender_id = p.id)::float8 AS since_last_ms, \
            (SELECT count(*) FROM chat_messages m WHERE m.game_id = g.id)::bigint AS total \

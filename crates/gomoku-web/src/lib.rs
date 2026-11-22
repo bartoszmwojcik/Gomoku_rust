@@ -3,6 +3,7 @@
 pub mod admin_cli;
 pub mod api;
 pub mod app;
+pub mod bot;
 pub mod client_address;
 pub mod clock;
 pub mod config;

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gomoku_db::{Database, DbConfig};
 use gomoku_web::app::{AppState, build_router};
+use gomoku_web::bot::BotRuntime;
 use gomoku_web::clock::system_clock;
 use gomoku_web::config::AppConfig;
 use gomoku_web::email::create_email_sender;
@@ -33,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db,
         email: create_email_sender(&config.email, clock.clone()),
         tasks: tokio_util::task::TaskTracker::new(),
+        bot: BotRuntime::new(&config.bot),
         clock,
         catalogs: Catalogs::embedded()?,
         config: Arc::new(config.clone()),

@@ -6,6 +6,7 @@
 
   const POLL_MS = 3000;
   const PLAY_POLL_MS = 2000;
+  const BOT_POLL_MS = 750;
   const IDLE_POLL_MS = 12000;
   const IDLE_AFTER_MS = 180000;
   const POLL_TIMEOUT_MS = 8000;
@@ -67,6 +68,8 @@
 
   // ---- the paper variant ----------------------------------------------------------------------------------------------
   const isPaper = () => game.variant === "paper";
+  const botOf = () => game.players.find((p) => p.kind === "bot") ?? null;
+  const botThinking = () => game.status === "active" && game.turnSeat !== null && botOf()?.seat === game.turnSeat;
   const known = () => (isPaper() ? game.paper.moves.length : game.moves.length);
   const lowMs = () => (isPaper() ? Math.min(60000, game.timeControlMs / 4) : 60000);
   let pendingXY = null;
@@ -189,7 +192,7 @@
     if (gone || hidden || accepting) return false;
     if (game.status === "waiting" || game.status === "active") return true;
     if (game.status === "finished") {
-      if (game.rematch?.state === "accepted") return false;
+      if (game.rematch?.state === "accepted" || botOf()) return false;
       if (isGuest && game.finishedAt && serverNow() >= Date.parse(game.finishedAt) + GUEST_RESULT_WINDOW_MS) return false;
       return true;
     }
@@ -197,6 +200,7 @@
   };
 
   const delay = () => {
+    if (botThinking()) return BOT_POLL_MS;
     if (game.status === "active" && allSeen()) return PLAY_POLL_MS;
     if (game.status === "finished" && performance.now() - quietSince > IDLE_AFTER_MS) return IDLE_POLL_MS;
     return POLL_MS;
@@ -439,6 +443,7 @@
           : myT ? gt("game.field.yourTurn", { side: gt(`game.sides.${sideSet}.name.${side}`) })
           : paper && autoSeat() === me() && game.turnSeat !== me() ? gt("game.field.automatForYou")
           : paper && autoSeat() === game.turnSeat ? gt("game.field.automatMoves")
+          : botThinking() ? gt("game.field.botThinking")
           : gt("game.field.opponentTurn"));
     }
     const polling = !finished && fails >= 1
@@ -476,7 +481,7 @@
       ? alertBox("info", game.fromRematch ? gt("game.field.drawnRematch", { swapped: gt(`game.sides.${sideSet}.rematchSwapped`), plays }) : gt("game.field.drawn", { plays }))
       : null;
     const opponentMove = !paper && myTurn() && game.moves.length
-      ? h("p", { class: "sr-only", role: "status", "data-testid": "opponent-move" }, gt("game.board.opponentMove", cellParts(last)))
+      ? h("p", { class: "sr-only", role: "status", "data-testid": "opponent-move" }, gt("game.board.opponentMove", cellParts(game.moves[game.moves.length - 1])))
       : null;
     const resign = !finished ? h("button", { type: "button", class: "danger", "data-testid": "resign", onclick: openResign }, gt("game.field.resign")) : null;
     const guestNotes = [];
@@ -498,7 +503,7 @@
       h("p", { "data-testid": "my-color" }, gt(finished ? "game.field.youPlayed" : "game.field.youPlay", { plays })),
       resign, rematchHost,
       game.audience ? qrPublic : null,
-      chat.el,
+      botOf() ? null : chat.el,
     ];
   };
 
@@ -581,9 +586,45 @@
     api(`/api/games/${gameId}/rematch/decline`, { signal: controller.signal }).finally(() => window.location.assign("/"));
   };
 
+  // ---- the next game against the bot (there is no rematch) ----------------------------------------------------------
+  let botReplayBusy = false;
+  let botReplayMsg = null;
+  const playBotAgain = async () => {
+    if (botReplayBusy) return;
+    botReplayBusy = true;
+    botReplayMsg = null;
+    render(true);
+    const me0 = game.players.find((p) => p.seat === me());
+    const body = { opponent: "bot", botLevel: botOf().bot?.level ?? 1 };
+    if (isGuest) {
+      body.acknowledgedGuestWarning = true;
+      if (me0 && !/^Gracz [12]$/.test(me0.displayName ?? "")) body.nickname = me0.displayName;
+    }
+    const result = await api("/api/games", { body });
+    if (result.ok) { window.location.assign(`/games/${result.data.gameId}`); return; }
+    const error = result.error;
+    botReplayBusy = false;
+    if (error.code === "BOT_UNAVAILABLE") botReplayMsg = { kind: "warning", text: gt("game.botReplay.botUnavailable") };
+    else if (error.code === "ACTIVE_GAME_EXISTS") botReplayMsg = { kind: "warning", title: gt("game.botReplay.activeTitle"), text: gt("game.botReplay.activeBody"), link: error.data?.gameId ? [`/games/${error.data.gameId}`, gt("game.botReplay.goToGame")] : null };
+    else if (error.code === "RATE_LIMITED") botReplayMsg = { kind: "warning", title: gt("game.botReplay.limitTitle"), text: gtp("home.shared.createLimit", 10) };
+    else botReplayMsg = { kind: "danger", title: gt("game.botReplay.failedTitle"), text: gt(error.code === "network" ? "game.botReplay.failedNetwork" : "game.botReplay.failedServer") };
+    render(true);
+  };
+  const renderBotReplay = () => {
+    const back = h("a", { href: "/", "data-testid": "rematch-leave" }, gt("game.shared.backToPanel"));
+    rematchHost.replaceChildren(h("section", { "aria-labelledby": "bot-replay-h", "data-testid": "bot-replay" },
+      h("h2", { id: "bot-replay-h" }, gt("game.botReplay.heading")),
+      h("p", null, gt("game.botReplay.intro")),
+      h("button", { type: "button", "data-testid": "bot-replay-again", disabled: botReplayBusy, onclick: playBotAgain }, gt(botReplayBusy ? "game.botReplay.creating" : "game.botReplay.playAgain")),
+      botReplayMsg ? alertBox(botReplayMsg.kind, botReplayMsg.title ? h("strong", null, botReplayMsg.title) : null, botReplayMsg.title ? " " : null, botReplayMsg.text,
+        botReplayMsg.link ? [" ", h("a", { href: botReplayMsg.link[0], "data-testid": "bot-replay-own-game" }, botReplayMsg.link[1])] : null) : null,
+      back));
+  };
+
   let countdownEl = null;
   const renderRematch = () => {
     if (game.status !== "finished") { rematchHost.replaceChildren(); return; }
+    if (botOf()) { renderBotReplay(); return; }
     const mode = rematchMode();
     const opp = other();
     const gone2 = game.players.some((p) => p.kind === "account" && p.displayName === null);
@@ -700,7 +741,7 @@
     const screen = screenOf();
     const focusCell = document.activeElement?.dataset?.cell ?? null;
     const stable = { ...game, clock: { remainingMs: game.clock.remainingMs, running: game.clock.running } };
-    const signature = JSON.stringify([screen, stable, fails, moveBusy, pendingCell, selected, refusal, moveFailed, returnNotice?.text, ownWaitingNotice, cancelNote, tokenNoticeDismissed, rematchBusy, rematchMsg?.text, rematchHidden, rematchWithdrawn, paperSelected, recenters, pendingXY]);
+    const signature = JSON.stringify([screen, stable, fails, moveBusy, pendingCell, selected, refusal, moveFailed, returnNotice?.text, ownWaitingNotice, cancelNote, tokenNoticeDismissed, rematchBusy, rematchMsg?.text, botReplayBusy, botReplayMsg?.text, rematchHidden, rematchWithdrawn, paperSelected, recenters, pendingXY]);
     if (signature === lastSignature && !force) return;
     lastSignature = signature;
     const builders = { gone: screenGone, cancelled: screenCancelled, waiting: screenWaiting, joined: screenJoined, opening: screenOpening, board: screenBoard };
@@ -708,7 +749,7 @@
     root.replaceChildren(...builders[screen]().filter(Boolean));
     if (screen === "board") {
       renderRematch();
-      if (!chatStarted) { chatStarted = true; chat.start(); }
+      if (!chatStarted && !botOf()) { chatStarted = true; chat.start(); }
     }
     if (screen === "joined") window.setTimeout(render, JOIN_STEP_MS + 50);
     if (focusCell !== null) root.querySelector(`[data-cell="${focusCell}"]`)?.focus();

@@ -13,7 +13,7 @@
   <strong>{{ ctx.tr.t("home.shared.guestWarningTitle") }}</strong>
   <p>{{ ctx.tr.t("home.play.warningBody") }}</p>
 </section>
-<form data-api="/api/games" data-redirect-game data-testid="guest-form" data-reveal-OWN_WAITING_GAME="#own-waiting" data-reveal-ACTIVE_GAME_EXISTS="#active-game" novalidate>
+<form data-api="/api/games" data-redirect-game data-reveal-BOT_UNAVAILABLE="#bot-unavailable" data-testid="guest-form" data-reveal-OWN_WAITING_GAME="#own-waiting" data-reveal-ACTIVE_GAME_EXISTS="#active-game" novalidate>
   <p data-form-error role="alert" data-testid="form-error"></p>
   <label for="guest-nickname">{{ ctx.tr.t("home.shared.nickname") }} <small>{{ ctx.tr.t("home.shared.optional") }}</small>
     <input id="guest-nickname" type="text" name="nickname" maxlength="48" autocomplete="nickname" data-testid="nickname">
@@ -21,12 +21,14 @@
   <small>{{ hint }}</small>
   <p data-error-for="nickname" role="alert"></p>
   <input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">
-  <p>{{ ctx.tr.t("home.play.validFor") }}</p>
-  <div data-settings data-testid="game-settings"></div>
+  <p data-hide-for-bot>{{ ctx.tr.t("home.play.validFor") }}</p>
+  <p data-show-for-bot hidden data-testid="bot-not-kept">{{ ctx.tr.t("home.play.botNotKept") }}</p>
+  <div data-settings{% if bot_enabled %} data-bot{% endif %} data-testid="game-settings"></div>
   <p data-testid="home-rules" data-rules aria-live="polite"></p>
-  <p><label><input type="checkbox" name="isPublic" data-testid="guest-create-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
-  <button type="submit" data-testid="guest-create">{{ ctx.tr.t("home.play.confirmInvitation") }}</button>
+  <p data-hide-for-bot><label><input type="checkbox" name="isPublic" data-testid="guest-create-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
+  <button type="submit" data-testid="guest-create" data-label-bot="{{ ctx.tr.t("home.play.confirmBot") }}">{{ ctx.tr.t("home.play.confirmInvitation") }}</button>
 </form>
+<p id="bot-unavailable" role="alert" hidden data-testid="bot-unavailable">{{ ctx.tr.t("home.shared.botUnavailable") }}</p>
 <section id="active-game" class="alert warning" role="alert" hidden data-testid="active-game">
   <strong>{{ ctx.tr.t("home.shared.activeGame.title") }}</strong> {{ ctx.tr.t("home.shared.activeGame.body") }}
   <a href="/" data-game-link>{{ ctx.tr.t("home.shared.goToGame") }}</a>

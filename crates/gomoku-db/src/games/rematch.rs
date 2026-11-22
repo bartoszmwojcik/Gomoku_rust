@@ -80,6 +80,9 @@ impl Database {
         if game.status != GameStatus::Finished {
             return Err(GameError::GameNotFinished);
         }
+        if players.iter().any(|p| p.kind == "bot") {
+            return Err(GameError::RematchWithBot);
+        }
         if players.iter().any(account_is_gone) {
             return Err(GameError::RematchUnavailable);
         }
@@ -227,7 +230,9 @@ impl Database {
             .finished_at
             .is_some_and(|at| to_ms(at) > to_ms(now) - GUEST_REMATCH_FRESH_MS);
         let unavailable = players.iter().any(|p| {
-            account_is_gone(p) || (p.kind == "guest" && (p.token_hash.is_none() || !token_fresh))
+            account_is_gone(p)
+                || p.kind == "bot"
+                || (p.kind == "guest" && (p.token_hash.is_none() || !token_fresh))
         });
         if unavailable {
             return Err(GameError::RematchUnavailable);

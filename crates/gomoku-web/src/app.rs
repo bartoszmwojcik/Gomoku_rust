@@ -32,6 +32,8 @@ pub struct AppState {
     pub email: Arc<dyn EmailSender>,
     /// Work that runs after the response (e.g. sending a reset link); awaited on shutdown and in tests.
     pub tasks: tokio_util::task::TaskTracker,
+    /// The hosted bot: admission, compute gate and turn service.
+    pub bot: Arc<crate::bot::BotRuntime>,
 }
 
 pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
