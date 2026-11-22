@@ -17,7 +17,7 @@ use crate::i18n::{Catalogs, lang_redirect};
 use crate::password::PasswordHasher;
 use crate::{
     pages, pages_games, routes_account, routes_auth, routes_chat, routes_email, routes_games,
-    routes_lobby, routes_password, routes_spectate,
+    routes_lobby, routes_password, routes_show, routes_spectate,
 };
 
 /// Shared application state: explicit composition instead of a DI container.
@@ -116,6 +116,21 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route("/lobby/seekers/{id}/pick", post(routes_lobby::pick))
         .route("/history", get(routes_lobby::history))
         .layer(from_fn_with_state(state.clone(), csrf));
+    // The show's API: the admin gate runs BEFORE the CSRF check, so a stranger always gets the 404.
+    let show_api = Router::new()
+        .route(
+            "/show",
+            get(routes_show::overview).post(routes_show::create),
+        )
+        .route("/show/preflight", post(routes_show::preflight))
+        .route("/show/{id}", get(routes_show::read))
+        .route("/show/{id}/end", post(routes_show::end))
+        .layer(from_fn_with_state(state.clone(), csrf))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::admin::admin_api_gate,
+        ));
+    let api = api.merge(show_api);
     Router::new()
         .route("/", get(pages::home))
         .route("/login", get(pages::login))
@@ -132,6 +147,9 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route("/games/{id}/review", get(pages_games::review))
         .route("/lobby", get(pages_games::lobby))
         .route("/history", get(pages_games::history))
+        .route("/backend", get(crate::pages_admin::backend))
+        .route("/show", get(crate::pages_admin::show_console))
+        .route("/show/{id}", get(crate::pages_admin::show_room))
         .route("/api/health", get(health))
         .nest("/api", api)
         .merge(crate::mcp::mcp_router(&state))

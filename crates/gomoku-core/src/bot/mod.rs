@@ -9,6 +9,7 @@ pub mod opponent;
 pub mod patterns;
 pub mod profile;
 pub mod seed;
+pub mod show_pause;
 pub mod transposition_table;
 pub mod zobrist;
 

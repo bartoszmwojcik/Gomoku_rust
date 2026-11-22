@@ -313,6 +313,7 @@ async fn an_unknown_address_is_refused_in_production() {
         ("APP_ENV", "production"),
         ("APP_ORIGIN", "https://gomoku.example"),
         ("TRUST_PROXY_HOPS", "1"),
+        ("ADMIN_EMAIL", "admin@example.com"),
     ])
     .await;
     let mut client = app.client();

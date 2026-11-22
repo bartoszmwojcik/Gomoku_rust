@@ -266,7 +266,7 @@ impl AgentTools {
             "gameId": accepted.game_id,
             "you": { "seat": 2, "color": color },
             "status": "active",
-            "opponent": { "kind": if accepted.creator_is_guest { "guest" } else { "account" } },
+            "opponent": { "kind": if accepted.creator_is_bot { "bot" } else if accepted.creator_is_guest { "guest" } else { "account" } },
         }))
     }
 
@@ -286,9 +286,16 @@ impl AgentTools {
             MINUTE_MS,
         )
         .await?;
+        // In a show the agent's reads move the bot (nobody else polls for it): once before the read, and in every round.
+        if seat.origin_is_show && input.wait_seconds == 0 {
+            crate::bot::play_due_move(&self.state, seat.game_id).await;
+        }
         for _ in 0..input.wait_seconds {
             if cancelled.is_cancelled() {
                 break;
+            }
+            if seat.origin_is_show {
+                crate::bot::play_due_move(&self.state, seat.game_id).await;
             }
             let ready = match self.state.db.agent_peek(&seat).await {
                 Ok(Some(peek)) => {

@@ -1,6 +1,7 @@
 //! Data access: configuration, connection pool, migrations, accounts, rate limits.
 
 mod accounts;
+pub mod admin;
 #[macro_use]
 pub mod cleanup;
 pub mod cli;

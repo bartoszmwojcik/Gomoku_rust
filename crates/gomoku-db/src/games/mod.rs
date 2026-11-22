@@ -14,6 +14,7 @@ mod lobby;
 pub(crate) mod paper;
 mod play;
 mod rematch;
+mod show;
 mod spectate;
 
 use gomoku_core::clock::{ClockState, deadline_ms, seat_out_of_time};
@@ -35,6 +36,7 @@ pub use lobby::{LobbyRows, SeekerRow, SeekingStatus};
 pub use paper::{PaperMoveRow, PaperSnapshot};
 pub use play::{MoveInput, MoveOutcome};
 pub use rematch::{RematchAccepted, RematchOffered};
+pub use show::{ShowBot, ShowCreated, ShowOpen, ShowRead};
 pub use spectate::{SpectateJoin, Spectator, SpectatorState};
 
 use crate::{Database, DbError};
@@ -104,6 +106,13 @@ pub enum GameError {
     RematchWithBot,
     #[error("there is no rematch against an agent")]
     RematchWithAgent,
+    #[error("a show is already open")]
+    ShowRunning {
+        game_id: Uuid,
+        layout: gomoku_core::admin::ShowLayout,
+    },
+    #[error("the show has ended")]
+    ShowEnded,
     #[error("the seeker was taken")]
     LobbySeekerTaken,
     #[error("the seeker's status expired")]
@@ -427,7 +436,7 @@ pub(crate) async fn record_finished(
          SELECT (g.finished_at AT TIME ZONE 'Europe/Warsaw')::date, k.kind_a, k.kind_b, 1 \
          FROM games g JOIN (SELECT game_id, min(kind) AS kind_a, max(kind) AS kind_b FROM game_players \
                             WHERE game_id = $1 GROUP BY game_id) k ON k.game_id = g.id \
-         WHERE g.id = $1 AND g.status = 'finished' \
+         WHERE g.id = $1 AND g.status = 'finished' AND g.origin <> 'show' \
          ON CONFLICT (day, kind_a, kind_b) DO UPDATE SET finished_count = game_pair_counters.finished_count + 1",
     )
     .bind(game_id)

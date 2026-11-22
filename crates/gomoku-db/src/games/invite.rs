@@ -98,6 +98,8 @@ pub struct AcceptOutcome {
     pub new_guest_seat: bool,
     /// The creator (seat 1) is a guest, not an account.
     pub creator_is_guest: bool,
+    /// The creator is a bot (a show).
+    pub creator_is_bot: bool,
 }
 
 struct Found {
@@ -108,17 +110,20 @@ struct Found {
     creator_user_id: Option<Uuid>,
     creator_name: Option<String>,
     creator_is_guest: bool,
+    creator_is_bot: bool,
     is_public: bool,
     settings: GameSettings,
 }
 
+/// `by_agent`: only an agent may use the code of a show, to everybody else it is unknown.
 async fn find_invitation(
     conn: &mut PgConnection,
     code: &str,
     now: OffsetDateTime,
+    by_agent: bool,
 ) -> Result<Option<Found>, GameError> {
     let row = sqlx::query(
-        "SELECT i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, g.is_public, g.variant, g.time_control_ms, \
+        "SELECT g.origin, i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, g.is_public, g.variant, g.time_control_ms, \
                 c.user_id AS creator_user_id, COALESCE(c.display_name, u.display_name) AS creator_account_name, \
                 c.kind AS creator_kind, c.nickname AS creator_nickname \
          FROM invitations i JOIN games g ON g.id = i.game_id \
@@ -130,6 +135,9 @@ async fn find_invitation(
     .fetch_optional(conn)
     .await?;
     let Some(row) = row else { return Ok(None) };
+    if row.try_get::<String, _>("origin")? == "show" && !by_agent {
+        return Ok(None);
+    }
     let status: String = row.try_get("status")?;
     let kind: String = row.try_get("creator_kind")?;
     let is_guest = kind == "guest";
@@ -146,6 +154,7 @@ async fn find_invitation(
             row.try_get("creator_account_name")?
         },
         creator_is_guest: is_guest,
+        creator_is_bot: kind == "bot",
         is_public: row.try_get("is_public")?,
         settings: GameSettings {
             variant: GameVariant::parse(&row.try_get::<String, _>("variant")?)
@@ -259,7 +268,7 @@ impl Database {
     ) -> Result<PreviewView, GameError> {
         settle_viewer(self, viewer, now).await?;
         let mut conn = self.pool().acquire().await?;
-        let found = find_invitation(&mut conn, code, now)
+        let found = find_invitation(&mut conn, code, now, false)
             .await?
             .ok_or(GameError::InvalidInvitation)?;
         let view = |state| PreviewView {
@@ -336,9 +345,14 @@ impl Database {
         };
         settle_viewer(self, viewer, now).await?;
         let mut tx = self.pool().begin().await?;
-        let peek = find_invitation(&mut tx, code, now)
-            .await?
-            .ok_or(GameError::InvalidInvitation)?;
+        let peek = find_invitation(
+            &mut tx,
+            code,
+            now,
+            matches!(input.join_as, JoinAs::Agent { .. }),
+        )
+        .await?
+        .ok_or(GameError::InvalidInvitation)?;
         let is_guest = matches!(input.join_as, JoinAs::Guest { .. });
 
         // The viewer's own game that may have to be cancelled is locked together with the invitation's game.
@@ -381,9 +395,14 @@ impl Database {
         if let Some(extra) = extra_game {
             close_stale(&mut tx, now, Scope::Game(extra)).await?;
         }
-        let found = find_invitation(&mut tx, code, now)
-            .await?
-            .ok_or(GameError::InvalidInvitation)?;
+        let found = find_invitation(
+            &mut tx,
+            code,
+            now,
+            matches!(input.join_as, JoinAs::Agent { .. }),
+        )
+        .await?
+        .ok_or(GameError::InvalidInvitation)?;
 
         // (1) The viewer already plays here: their own invitation, or a repeat (nobody joins twice, no new token).
         if let Some(seat) = member_of(&mut tx, viewer, found.game_id, now).await? {
@@ -397,6 +416,7 @@ impl Database {
                     game_id: found.game_id,
                     new_guest_seat: false,
                     creator_is_guest: found.creator_is_guest,
+                    creator_is_bot: found.creator_is_bot,
                 });
             }
             return Err(GameError::InvalidInvitation);
@@ -497,6 +517,12 @@ impl Database {
         if started.is_none() {
             return Err(GameError::InvalidInvitation);
         }
+        // A show has nobody who "opens" it: its clock starts with the agent's join (the bot has seen it already).
+        sqlx::query("UPDATE games SET turn_started_at = $2 WHERE id = $1 AND origin = 'show' AND turn_started_at IS NULL")
+            .bind(found.game_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
         if let Viewer::Account(user) = viewer {
             sqlx::query("DELETE FROM lobby_seekers WHERE user_id = $1")
                 .bind(user)
@@ -508,6 +534,7 @@ impl Database {
             game_id: found.game_id,
             new_guest_seat: is_guest,
             creator_is_guest: found.creator_is_guest,
+            creator_is_bot: found.creator_is_bot,
         })
     }
 }

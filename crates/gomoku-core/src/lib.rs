@@ -2,6 +2,7 @@
 //!
 //! Ported from the Node.js reference (`packages/core/src/games`); the tests carry over its cases.
 
+pub mod admin;
 pub mod agent;
 pub mod apply_move;
 pub mod auth;
@@ -10,6 +11,7 @@ pub mod bot;
 pub mod chat;
 pub mod clock;
 pub mod constants;
+pub mod finished_stats;
 pub mod game;
 pub mod history;
 pub mod i18n;

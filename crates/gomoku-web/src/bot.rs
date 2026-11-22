@@ -5,16 +5,20 @@
 //! turn (lazy recovery). The bot plays through the same `play_move` a human uses.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use gomoku_core::board::{BOARD_CELLS, Bitboard, coords_of};
-use gomoku_core::bot::budget::{BotStrength, BudgetInput, bot_strength_for, budget_for};
+use gomoku_core::bot::budget::{
+    BotStrength, BotTimeLimits, BudgetInput, bot_strength_for, budget_for,
+};
 use gomoku_core::bot::choose_move::{
     BotLevel, BotPosition, SearchBudget, SearchInput, choose_move,
 };
 use gomoku_core::bot::profile::BOT_UNAVAILABLE_MESSAGE;
 use gomoku_core::bot::seed::rng_for;
+use gomoku_core::bot::show_pause::{clip_show_pause, show_bot_limits, show_pause_ms};
 use gomoku_db::Uuid;
 use gomoku_db::games::{BotTurn, BotTurnRead, GameError, MoveInput};
 use tokio::sync::Semaphore;
@@ -167,8 +171,19 @@ pub struct BotRuntime {
     probe: Arc<dyn ResourceProbe>,
     chooser: Arc<dyn MoveChooser>,
     gate: Semaphore,
+    /// Searches queued at the gate or running (a show that waits behind other games is not "stalled").
+    pending: AtomicUsize,
     in_flight: Mutex<HashSet<Uuid>>,
     failures: Mutex<Failures>,
+}
+
+/// The outcome of the preflight's engine trial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineTrial {
+    pub ok: bool,
+    pub ms: i64,
+    pub limit_ms: i64,
+    pub waited_ms: i64,
 }
 
 /// What a scheduled turn did.
@@ -207,6 +222,7 @@ impl BotRuntime {
             probe,
             chooser,
             gate: Semaphore::new(1),
+            pending: AtomicUsize::new(0),
             in_flight: Mutex::new(HashSet::new()),
             failures: Mutex::new(Failures::default()),
         })
@@ -256,6 +272,95 @@ impl BotRuntime {
         Ok(strength)
     }
 
+    /// The resource gate of a show: ONE memory reading frozen into every bot, and one slot of capacity for the whole show.
+    /// Every refusal is `503 BOT_UNAVAILABLE` with the reason (only the administrator reads it).
+    pub async fn admit_show(
+        &self,
+        state: &AppState,
+        levels: &[BotLevel],
+    ) -> Result<Vec<BotStrength>, ApiError> {
+        let refuse = |reason: &str| {
+            ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "BOT_UNAVAILABLE",
+                BOT_UNAVAILABLE_MESSAGE,
+            )
+            .with_retry_after(BOT_RETRY_AFTER_SECONDS)
+            .with_data(serde_json::json!({ "reason": reason }))
+        };
+        if !self.config.enabled {
+            return Err(refuse("disabled"));
+        }
+        let (available_mb, source) = self.probe.read();
+        let strengths: Option<Vec<BotStrength>> =
+            if available_mb >= self.config.min_available_mb as f64 {
+                levels
+                    .iter()
+                    .map(|&l| bot_strength_for(l, available_mb))
+                    .collect()
+            } else {
+                None
+            };
+        let Some(strengths) = strengths else {
+            tracing::warn!(
+                event = "bot.refused",
+                reason = "memory",
+                available_mb,
+                source = source.as_str()
+            );
+            return Err(refuse("memory"));
+        };
+        let active = state
+            .db
+            .count_active_bot_games((state.clock)())
+            .await
+            .map_err(|e| ApiError::internal_logged("bot admission", &e))?;
+        if active >= i64::from(self.config.max_active_games) {
+            tracing::warn!(
+                event = "bot.refused",
+                reason = "busy",
+                active_games = active
+            );
+            return Err(refuse("busy"));
+        }
+        Ok(strengths)
+    }
+
+    /// The memory the probe sees now, for the preflight.
+    pub fn available_mb(&self) -> f64 {
+        self.probe.read().0
+    }
+
+    /// One level-1 move on an empty board through the production path: the preflight's real engine check.
+    pub async fn trial(&self) -> EngineTrial {
+        let game_id = Uuid::new_v4();
+        let turn = BotTurn {
+            game_id,
+            bot_player_id: Uuid::nil(),
+            level: 1,
+            memory_mb: None,
+            depth_cap: None,
+            moves: Vec::new(),
+            remaining_ms: 600_000,
+            is_show: false,
+            clock_at_turn_start_ms: 600_000,
+            elapsed_ms: None,
+        };
+        let waited = Instant::now();
+        drop(self.gate.acquire().await);
+        let waited_ms = i64::try_from(waited.elapsed().as_millis()).unwrap_or(i64::MAX);
+        let started = Instant::now();
+        self.choose(&turn).await;
+        let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+        let limit_ms = self.config.limits.level1.ceiling_ms;
+        EngineTrial {
+            ok: lock(&self.failures).count(game_id) == 0 && ms <= limit_ms,
+            ms,
+            limit_ms,
+            waited_ms,
+        }
+    }
+
     /// First cell without a stone: the last resort when even level 1 fails.
     fn first_free_cell(position: &BotPosition) -> usize {
         (0..BOARD_CELLS)
@@ -286,6 +391,23 @@ impl BotRuntime {
     /// The cell the bot plays: always a free cell. One search at a time per process, first come first served; the time spent
     /// waiting for the gate is charged to the bot's clock before the budget is cut.
     pub async fn choose(&self, turn: &BotTurn) -> usize {
+        self.choose_with(turn, self.config.limits).await
+    }
+
+    /// Computations queued at the gate or running right now.
+    pub fn pending(&self) -> usize {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    /// [`BotRuntime::choose`] with the time limits of the caller (a show plays at its own pace).
+    pub async fn choose_with(&self, turn: &BotTurn, limits: BotTimeLimits) -> usize {
+        self.pending.fetch_add(1, Ordering::SeqCst);
+        let cell = self.choose_gated(turn, limits).await;
+        self.pending.fetch_sub(1, Ordering::SeqCst);
+        cell
+    }
+
+    async fn choose_gated(&self, turn: &BotTurn, limits: BotTimeLimits) -> usize {
         let queued = Instant::now();
         let position = position_of(&turn.moves);
         let Ok(_permit) = self.gate.acquire().await else {
@@ -301,7 +423,7 @@ impl BotRuntime {
             memory_mb: turn.memory_mb,
             depth_cap: turn.depth_cap,
             remaining_clock_ms: turn.remaining_ms - waited,
-            limits: self.config.limits,
+            limits,
         });
         if budget.ceiling_ms <= 0.0 {
             return self.inline_level1(turn, &position);
@@ -396,7 +518,26 @@ async fn turn_inner(state: &AppState, game_id: Uuid) -> TurnOutcome {
     let BotTurnRead::Due(turn) = read else {
         return TurnOutcome::Idle;
     };
-    let cell = state.bot.choose(&turn).await;
+    let limits = if turn.is_show {
+        let show = state.config.show;
+        // The pause is counted from the start of the turn and charged to the bot's clock; the search starts after it.
+        let pause = clip_show_pause(
+            show_pause_ms(
+                &game_id.to_string(),
+                turn.moves.len() as u32 + 1,
+                show.pause_min_ms,
+                show.pause_max_ms,
+            ),
+            turn.clock_at_turn_start_ms,
+        );
+        if turn.elapsed_ms.is_none_or(|elapsed| elapsed < pause) {
+            return TurnOutcome::Idle;
+        }
+        show_bot_limits(state.config.bot.limits, show.bot_l2_soft_ms)
+    } else {
+        state.config.bot.limits
+    };
+    let cell = state.bot.choose_with(&turn, limits).await;
     let (x, y) = coords_of(cell);
     let input = MoveInput {
         x: x as i32,

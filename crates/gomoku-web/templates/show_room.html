@@ -1,0 +1,6 @@
+{% extends "layout.html" %}
+{% block head %}<meta name="robots" content="noindex,nofollow"><script src="/assets/gomoku.js" defer></script><script src="/assets/show-room.js" defer></script>{% endblock %}
+{% block content %}
+<div id="show-room" data-game-id="{{ game_id }}"></div>
+<script type="application/json" id="show-initial">{{ initial|safe }}</script>
+{% endblock %}
