@@ -104,3 +104,11 @@ ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(-
 @media (max-width: 900px) { .show-stage, .show-stage[data-projector] { grid-template-columns: minmax(0, 1fr); } }
 main:has(.show-stage) { max-width: none; }
 .show-side input[type="checkbox"] { width: auto; min-width: 0; height: auto; }
+
+/* Accessibility: a visible focus ring on everything focusable, a skip link, calm motion for those who ask for it. */
+:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+main:focus { outline: none; }
+.skip-link { position: absolute; left: 0.5rem; top: -4rem; padding: 0.5rem 1rem; background: var(--surface-raised); color: var(--text-primary); z-index: 10; }
+.skip-link:focus { top: 0.5rem; }
+.theme-switch { background: transparent; color: inherit; border: 1px solid var(--board-line); padding: 0 0.75rem; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }

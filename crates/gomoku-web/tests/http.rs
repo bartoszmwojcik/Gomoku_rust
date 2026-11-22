@@ -57,9 +57,8 @@ async fn home_renders_in_polish_by_default_and_follows_accept_language() {
         .with_header("accept-language", "de")
         .get("/")
         .await;
-    // German has no catalog yet: the chain falls back to English.
     assert!(de.body.contains(r#"<html lang="de">"#));
-    assert!(de.body.contains("Sign up"));
+    assert!(de.body.contains("Registrieren"));
 }
 
 #[tokio::test]
@@ -119,4 +118,31 @@ fn the_system_clock_tells_the_current_time() {
     let before = gomoku_db::OffsetDateTime::now_utc();
     let now = (gomoku_web::clock::system_clock())();
     assert!(now >= before && now - before < time::Duration::seconds(5));
+}
+
+#[tokio::test]
+async fn german_theme_switch_and_skip_link_are_on_every_page() {
+    let app = TestApp::without_database(Ok(()));
+    let page = app
+        .client()
+        .with_header("accept-language", "de")
+        .get("/")
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains(r#"<html lang="de">"#));
+    assert!(
+        page.body.contains("Zum Inhalt springen"),
+        "the skip link is German"
+    );
+    assert!(
+        page.body.contains(r#"data-testid="theme-switch""#) && page.body.contains("Helles Design")
+    );
+    assert!(page.body.contains(r##"href="#main""##) && page.body.contains(r#"<main id="main""#));
+    assert!(
+        page.body.contains("gomoku_theme=(dark|light)"),
+        "the head script applies the stored theme"
+    );
+    assert!(page.body.contains("?lang=de") && page.body.contains("Deutsch"));
+    let polish = app.client().get("/").await;
+    assert!(polish.body.contains("Jasny motyw") && polish.body.contains("Przejdź do treści"));
 }
