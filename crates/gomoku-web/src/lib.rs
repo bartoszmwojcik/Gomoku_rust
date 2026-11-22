@@ -13,6 +13,7 @@ pub mod game_view;
 pub mod guest;
 pub mod health;
 pub mod i18n;
+pub mod mcp;
 pub mod pages;
 pub mod pages_games;
 pub mod password;

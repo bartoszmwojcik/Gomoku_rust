@@ -54,6 +54,9 @@ pub const CHAT_HARD_MAX_LENGTH: usize = 1000;
 pub const CHAT_RAW_MAX_UNITS: usize = 1000;
 /// Minimum interval between two messages of one sender.
 pub const CHAT_MIN_INTERVAL_MS: u64 = 2000;
+/// The chat limits of an MCP agent: same defaults as a person's.
+pub const CHAT_AGENT_MAX_LENGTH: usize = 200;
+pub const CHAT_AGENT_MIN_INTERVAL_MS: u64 = 2000;
 /// Messages per game, all senders together.
 pub const CHAT_MAX_MESSAGES_PER_GAME: usize = 500;
 /// Default and maximum page of messages.

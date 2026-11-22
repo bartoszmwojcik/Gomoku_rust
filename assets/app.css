@@ -73,3 +73,16 @@ ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(-
 .paper-selection-bar button, .paper-toolbar button { min-height: 2.75rem; min-width: 2.75rem; }
 .settings fieldset { border: 1px solid var(--board-line); margin: 0.5rem 0; }
 .settings [role="radio"], .settings label { min-height: 2.75rem; display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 0.75rem; }
+
+/* The "how to connect an agent" card: long commands wrap inside the card instead of running out of it. */
+[data-testid="agent-card"] pre,
+[data-testid="agent-card"] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-testid="agent-card"] pre {
+  margin: 0.5rem 0;
+}
+[data-testid="agent-card"] summary {
+  cursor: pointer;
+}

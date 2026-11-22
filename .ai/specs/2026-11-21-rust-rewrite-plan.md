@@ -274,3 +274,23 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Odstępstwa: pułap czasu egzekwowany współpracą silnika (co 1024 węzły), bez zabijania wątku; sonda pamięci czyta cgroup v2 i `/proc/meminfo`
   (mniejsza z wartości); stos wątku wyszukiwania 16 MiB; limity czasu bez zmian (Rust jest szybszy na węzeł, więc głębokość w produkcji będzie większa).
 - Nie zrobione / nie sprawdzono: wydajność na docelowym hoście i sonda pamięci w kontenerze produkcyjnym, tryb pokazu (F8), dotyk/mobile.
+
+### F7 — Agenci MCP (zrobione, jeden PR)
+
+- Kontrakt: `.ai/docs/2026-11-22-f7-contract.md` (z wyborem biblioteki). **Decyzja:** oficjalne SDK `rmcp` 3.11 (przypięte `=3.11.0`), bezstanowe,
+  odpowiedzi tylko JSON, z własną warstwą przed nim (`Origin`, limit na adres, odmowy w kształcie JSON-RPC: 403/405/429/503). Własny JSON-RPC zostaje
+  awaryjnie. Klient Claude Code (`claude mcp add --transport http …` + `claude mcp list`) łączy się z serwerem lokalnym: „Connected”.
+- Cztery narzędzia (`join`, `get_state`, `play_move`, `send_message`) z opisami i schematami wprost z kontraktu (`mcp/tools.json`); argumenty nie są
+  walidowane przed narzędziem, każdy zły kształt kończy się jednym kształtem błędu (`INVALID_INPUT` z nazwą pola). Błąd to zawsze wynik narzędzia.
+- Tożsamość: brak tabeli agentów, tożsamością jest wiersz `game_players` (rodzaj `agent`, miejsce 2, hash tokenu SHA-256, deklarowana nazwa). Token jest
+  ważny w partii i godzinę po jej końcu; sprzątanie czyści hash (reguła `agentTokens`). Migracja 0009.
+- `join` przez istniejące `accept_invitation` (`JoinAs::Agent`): te same blokady i warunkowe zapisy co dla człowieka; kody zaproszeń wspólne z przeglądarką
+  (kto pierwszy). Pule: 300 żądań/min na adres, 10 udanych dołączeń/h, 20 błędnych kodów/15 min, 60 wywołań/min i 30 wiadomości/min na token.
+- `get_state` z czekaniem do 25 rund po 1 s (jeden tani odczyt na rundę, bez transakcji w trakcie snu; anulowanie przy zerwaniu połączenia), czat w tej
+  samej odpowiedzi (kursor `afterMessage`), wariant papierowy (wycinek planszy z marginesem 3).
+- Web: karta „Jak podłączyć agenta” na ekranie oczekiwania (6 klientów, polecenie lub plik, kopiowanie, adres serwera), `invitation.mcpUrl`, etykiety
+  „Agent · nazwa (deklarowane)”, w historii i przeglądzie; brak rewanżu z agentem (`409 REMATCH_UNAVAILABLE`, `reason: agent`) z podpowiedzią; teksty PL/EN/FR.
+- Odstępstwa od Node: odpowiedzi zawsze JSON (Node odpowiada SSE klientom z 2025); odmowy warstwy transportu `rmcp` (413/415/400/406) są tekstem, a nie
+  JSON-RPC; brak `listChanged`; `MCP_POLL_INTERVAL_MS` jako pokrętło (domyślnie 1000) dla testów; bez `join_channel`; opisy i błędy MCP po polsku (jak w Node).
+- Nie zrobione / nie sprawdzono: pełna partia prawdziwym modelem (sprawdzone tylko połączenie i ręczne wywołania narzędzi przez HTTP), zachowanie za
+  proxy produkcyjnym (wymaga nagłówka `Host`), globalny limit czekających `get_state` (brak w Node), tryb pokazu bot–agent (F8), dotyk/mobile.

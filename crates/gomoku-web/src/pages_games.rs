@@ -551,6 +551,9 @@ pub async fn review(
                 player["displayName"] = bot["name"].clone();
                 player["bot"] = bot["bot"].clone();
             }
+            if p.kind == "agent" {
+                player["agentName"] = json!(p.agent_name);
+            }
             player
         })
         .collect();

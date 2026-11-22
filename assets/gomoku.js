@@ -173,10 +173,17 @@
     return gt("common.bot.name", { level: bot.level });
   };
 
+  /** "Agent" or "Agent · name (declared)": the name is the agent's own claim, shown as plain text and cut when long. */
+  const agentLabel = (player) => {
+    const name = typeof player.agentName === "string" ? player.agentName.trim() : "";
+    return name ? gt("common.player.agentDeclared", { name }) : gt("common.player.agent");
+  };
+
   const playerLabelOf = (player) => playerLabel(player, null);
   const playerLabel = (player, mySeat) => {
     const mine = player.seat === mySeat;
     if (player.kind === "bot") return botLabel(player);
+    if (player.kind === "agent") return agentLabel(player);
     if (player.kind === "account") {
       if (player.displayName === null) return gt("common.player.deleted");
       return mine ? gt("common.player.youAccount", { name: player.displayName }) : player.displayName;

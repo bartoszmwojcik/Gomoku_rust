@@ -134,6 +134,7 @@ pub fn build_router(state: AppState, assets_dir: &Path) -> Router {
         .route("/history", get(pages_games::history))
         .route("/api/health", get(health))
         .nest("/api", api)
+        .merge(crate::mcp::mcp_router(&state))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .layer(from_fn_with_state(state.clone(), lang_redirect))
         .layer(TraceLayer::new_for_http())
