@@ -411,7 +411,7 @@ async fn the_automat_plays_for_a_leader_who_ran_out_of_time() {
         error_of(&mv(&mut black, &id, 51, 51, 12).await)["data"]["reason"],
         "opponent_turn"
     );
-    assert_eq!(mv(&mut white, &id, 57, 53, 12).await.status, StatusCode::OK);
+    assert_eq!(mv(&mut white, &id, 58, 53, 12).await.status, StatusCode::OK);
     let waiting = view(&mut white, &id).await;
     assert!(waiting["paper"]["autoMoveAt"].is_string());
     let blocked = mv(&mut black, &id, 51, 51, 13).await;
