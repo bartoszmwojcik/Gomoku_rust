@@ -312,3 +312,13 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
   (PL ma lekką usterkę gramatyczną z Node w formie „1 sekundy” — zostawiona); token `--layout-width-board-show` już istniał w `game-tokens.css`.
 - Nie zrobione / nie sprawdzono: strojenie tempa pokazu (T1–T3) i poziom 2 w bot–bot na Ruście, `bot-bench --show`, zachowanie napędu w tle karty na prawdziwym projektorze,
   Wake Lock w prawdziwych przeglądarkach (w teście headless go nie ma), dotyk/mobile, pełny pokaz bot–agent z prawdziwym modelem.
+
+### F9 — i18n i dopracowanie UI (zrobione, jeden PR)
+
+- Niemiecki: `de.json` (910 kluczy, ten sam zestaw co PL/EN/FR, wersja robocza z katalogów Node DE — **bez przeglądu native speakera**), wbudowany w `Catalogs`,
+  odnośnik „Deutsch” w nagłówku, test parzystości obejmuje DE.
+- Motyw jasny/ciemny: skrypt w `<head>` ustawia `data-theme` przed pierwszym malowaniem (ciasteczko `gomoku_theme`, inaczej `prefers-color-scheme`), przełącznik
+  w pasku (`theme.js`), wybór w ciasteczku na rok.
+- Dostępność: link „Przejdź do treści”, `<main id="main">`, widoczny pierścień fokusu z tokenu, `prefers-reduced-motion`.
+- Straże (`tests/no_literals.rs`): w skryptach i szablonach graczy nie ma polskich literałów (wyjątek: `backend.html`), a każdy statyczny klucz użyty w ekranach istnieje w katalogu PL.
+- Nie zrobione / nie sprawdzono: przegląd design systemu element po elemencie i kontrast w obu motywach (zakładam tokeny), czytniki ekranu, dotyk/mobile, język niemiecki w e-mailach.

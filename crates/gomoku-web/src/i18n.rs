@@ -19,6 +19,7 @@ use crate::app::AppState;
 const PL: &str = include_str!("../i18n/pl.json");
 const EN: &str = include_str!("../i18n/en.json");
 const FR: &str = include_str!("../i18n/fr.json");
+const DE: &str = include_str!("../i18n/de.json");
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
@@ -37,7 +38,7 @@ pub struct Catalogs {
 
 impl Catalogs {
     pub fn embedded() -> Result<Arc<Self>, CatalogError> {
-        Self::from_sources(&[("pl", PL), ("en", EN), ("fr", FR)])
+        Self::from_sources(&[("pl", PL), ("en", EN), ("fr", FR), ("de", DE)])
     }
 
     /// Builds catalogs from `(language code, JSON text)` pairs; every text is a flat object of strings.
@@ -324,7 +325,7 @@ mod tests {
         assert!(!pl.is_empty());
         assert_eq!(catalogs.keys("en"), pl, "EN catalog differs from PL");
         assert_eq!(catalogs.keys("fr"), pl, "FR catalog differs from PL");
-        assert!(catalogs.keys("de").is_empty());
+        assert_eq!(catalogs.keys("de"), pl, "DE catalog differs from PL");
     }
 
     #[test]
