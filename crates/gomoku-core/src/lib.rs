@@ -5,6 +5,7 @@
 pub mod apply_move;
 pub mod auth;
 pub mod board;
+pub mod chat;
 pub mod clock;
 pub mod constants;
 pub mod game;

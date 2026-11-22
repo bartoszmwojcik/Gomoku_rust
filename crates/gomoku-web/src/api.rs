@@ -84,6 +84,21 @@ impl ApiError {
         self
     }
 
+    /// Adds a field issue that carries parameters (the chat's refusal reason), with the sentence for the plain message.
+    pub fn with_field_params(mut self, field: &str, issue: Value, message: &str) -> Self {
+        self.0
+            .field_errors
+            .entry(field.to_owned())
+            .or_default()
+            .push(message.to_owned());
+        self.0
+            .field_issues
+            .entry(field.to_owned())
+            .or_default()
+            .push(issue);
+        self
+    }
+
     pub fn validation(message: &str) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "VALIDATION", message)
     }

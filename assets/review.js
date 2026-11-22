@@ -1,7 +1,7 @@
 // The review of a finished game: step through the moves; no request is made while stepping.
 (() => {
   const { gt } = window.GT;
-  const { h, stonesOf, createBoard, outcomeOf, playerLabel, formatDate, cellParts } = window.Gomoku;
+  const { h, stonesOf, createBoard, outcomeOf, neutralOutcomeOf, playerLabel, formatDate, cellParts } = window.Gomoku;
   const root = document.getElementById("review");
   const data = JSON.parse(document.getElementById("review-data").textContent);
   const total = data.moves.length;
@@ -23,7 +23,9 @@
   };
   const go = (n) => () => { step = clamp(typeof n === "function" ? n(step) : n); draw(); };
   const status = h("p", { role: "status", "data-testid": "review-step" }, "");
-  const outcome = data.result ? outcomeOf(data.result, data.viewerSeat) : null;
+  const outcome = data.result
+    ? (data.viewerSeat === null ? neutralOutcomeOf(data.result, data.blackSeat, data.players) : outcomeOf(data.result, data.viewerSeat))
+    : null;
   const reason = data.result ? gt(`history.reason.${data.result.reason}`) : "";
   const blackSeat = data.blackSeat;
   root.append(

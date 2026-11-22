@@ -2,7 +2,8 @@
 
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
-use gomoku_core::game::{GUEST_COOKIE_MAX_AGE_SECONDS, guest_cookie_name};
+use gomoku_core::constants::SPECTATOR_ACCESS_MS;
+use gomoku_core::game::{GUEST_COOKIE_MAX_AGE_SECONDS, guest_cookie_name, spectator_cookie_name};
 use time::Duration;
 
 use crate::security::hash_opaque_token;
@@ -43,6 +44,36 @@ pub fn guest_token_hash(jar: &CookieJar, secure: bool) -> Option<String> {
 pub fn refreshed(jar: CookieJar, secure: bool, max_age_seconds: i64) -> CookieJar {
     match guest_token(&jar, secure) {
         Some(token) => jar.add(cookie(secure, token, max_age_seconds)),
+        None => jar,
+    }
+}
+
+fn spectator_cookie_of(secure: bool, token: String) -> Cookie<'static> {
+    let mut cookie = Cookie::new(spectator_cookie_name(secure), token);
+    cookie.set_http_only(true);
+    cookie.set_secure(secure);
+    cookie.set_same_site(SameSite::Lax);
+    cookie.set_path("/");
+    cookie.set_max_age(Duration::seconds((SPECTATOR_ACCESS_MS / 1000) as i64));
+    cookie
+}
+
+/// The spectator cookie: the access of a visitor to one public game, for an hour from the last read.
+pub fn spectator_cookie(secure: bool, token: String) -> Cookie<'static> {
+    spectator_cookie_of(secure, token)
+}
+
+/// The raw spectator token from the cookie jar, if any.
+pub fn spectator_token(jar: &CookieJar, secure: bool) -> Option<String> {
+    jar.get(spectator_cookie_name(secure))
+        .map(|c| c.value().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+/// Re-sets the spectator cookie the browser carries with a fresh hour (none: nothing).
+pub fn spectator_refreshed(jar: CookieJar, secure: bool) -> CookieJar {
+    match spectator_token(&jar, secure) {
+        Some(token) => jar.add(spectator_cookie_of(secure, token)),
         None => jar,
     }
 }
@@ -105,6 +136,39 @@ mod tests {
             guest_token(&jar, true),
             None,
             "the prefixed name is a different cookie"
+        );
+    }
+
+    #[test]
+    fn the_spectator_cookie_is_its_own() {
+        let secure = spectator_cookie(true, "t".into()).to_string();
+        assert!(secure.starts_with("__Host-gomoku_spectator=t"), "{secure}");
+        for attribute in [
+            "HttpOnly",
+            "Secure",
+            "SameSite=Lax",
+            "Path=/",
+            "Max-Age=3600",
+        ] {
+            assert!(secure.contains(attribute), "{attribute} in {secure}");
+        }
+        let jar = CookieJar::new();
+        assert_eq!(spectator_token(&jar, false), None);
+        assert!(
+            spectator_refreshed(jar.clone(), false)
+                .get("gomoku_spectator")
+                .is_none()
+        );
+        let jar = jar.add(Cookie::new("gomoku_spectator", "abc"));
+        assert_eq!(spectator_token(&jar, false).as_deref(), Some("abc"));
+        let again = spectator_refreshed(jar, false);
+        assert_eq!(
+            again.get("gomoku_spectator").map(Cookie::value),
+            Some("abc")
+        );
+        assert_eq!(
+            again.get("gomoku_spectator").and_then(Cookie::max_age),
+            Some(Duration::seconds(3600))
         );
     }
 }

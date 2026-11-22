@@ -38,7 +38,8 @@ pub struct HistoryPageRows {
 pub struct ReviewRows {
     pub game: GameRow,
     pub players: Vec<PlayerRow>,
-    pub viewer_seat: Seat,
+    /// `None` for a reader who came with the code and did not play.
+    pub viewer_seat: Option<Seat>,
 }
 
 fn seat(value: i16) -> Result<Seat, GameError> {
@@ -131,9 +132,43 @@ impl Database {
             .iter()
             .find(|p| p.kind == "account" && p.user_id == Some(user_id));
         Ok(viewer.map(|v| ReviewRows {
-            viewer_seat: v.seat,
+            viewer_seat: Some(v.seat),
             game,
             players: players.clone(),
+        }))
+    }
+
+    /// A finished game of a public audience for a reader with the invitation code: the game must still be public and the
+    /// code must be this game's code. The reader writes nothing and has no seat.
+    pub async fn open_review_by_code(
+        &self,
+        game_id: Uuid,
+        code: &str,
+    ) -> Result<Option<ReviewRows>, GameError> {
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {GAME_COLUMNS} FROM games g WHERE id = $1 AND status = 'finished' AND is_public \
+             AND EXISTS (SELECT 1 FROM invitations i WHERE i.game_id = g.id AND i.code = $2)"
+        )))
+        .bind(game_id)
+        .bind(code)
+        .fetch_optional(self.pool())
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let game = GameRow::from_row(&row)?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{PLAYER_SELECT} WHERE p.game_id = $1 ORDER BY p.seat"
+        )))
+        .bind(game_id)
+        .fetch_all(self.pool())
+        .await?;
+        let players = rows
+            .iter()
+            .map(PlayerRow::from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(ReviewRows {
+            viewer_seat: None,
+            game,
+            players,
         }))
     }
 }

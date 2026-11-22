@@ -103,7 +103,7 @@ impl Database {
         .bind(player_id)
         .execute(&mut *tx)
         .await?;
-        let state = snapshot(&mut tx, game_id, player_id).await?;
+        let state = snapshot(&mut tx, game_id, player_id, now).await?;
         tx.commit().await?;
         Ok(state)
     }
@@ -128,7 +128,7 @@ impl Database {
             && moves.get(after) == Some(&input.cell)
             && seat_on_turn(after, black) == seat
         {
-            return snapshot(&mut tx, game_id, player_id).await;
+            return snapshot(&mut tx, game_id, player_id, now).await;
         }
 
         if settle_game(&mut tx, game_id, now).await? {
@@ -192,7 +192,7 @@ impl Database {
             record_finished(&mut tx, game_id).await?;
             release_slots(&mut tx, game_id).await?;
         }
-        let state = snapshot(&mut tx, game_id, player_id).await?;
+        let state = snapshot(&mut tx, game_id, player_id, now).await?;
         tx.commit().await?;
         Ok(state)
     }
@@ -208,7 +208,7 @@ impl Database {
         let mut tx = self.pool().begin().await?;
         let (game, seat) = lock_for_play(&mut tx, game_id, player_id).await?;
         if game.end_reason == Some(EndReason::Resignation) && game.winner != Some(seat) {
-            return snapshot(&mut tx, game_id, player_id).await;
+            return snapshot(&mut tx, game_id, player_id, now).await;
         }
         if settle_game(&mut tx, game_id, now).await? {
             tx.commit().await?;
@@ -233,7 +233,7 @@ impl Database {
         }
         record_finished(&mut tx, game_id).await?;
         release_slots(&mut tx, game_id).await?;
-        let state = snapshot(&mut tx, game_id, player_id).await?;
+        let state = snapshot(&mut tx, game_id, player_id, now).await?;
         tx.commit().await?;
         Ok(state)
     }

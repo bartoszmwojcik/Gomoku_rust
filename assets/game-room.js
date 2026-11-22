@@ -65,6 +65,40 @@
 
   const boardCtl = createBoard({ onCell: (x, y) => onCell(x, y) });
 
+  // Figures are built once, so the browser loads each QR image once and not on every render.
+  const qrFigure = (alt, caption) => h("figure", { class: "qr-figure" },
+    h("img", { src: `/api/games/${gameId}/qr`, alt, class: "qr" }), h("figcaption", null, caption));
+  const qrInvite = qrFigure(gt("game.room.qrLabel"), gt("game.room.qrCaption"));
+  const qrPublic = h("section", { class: "card", "data-testid": "qr-panel" }, h("h2", null, gt("game.audience.qrTitle")),
+    qrFigure(gt("game.audience.qrLabel"), gt("game.audience.qrCaption")));
+  const chat = window.GomokuChat.createChat({
+    base: `/api/games/${gameId}`,
+    mySeat: me(),
+    players: () => game.players,
+    onGone: () => { gone = true; render(); },
+  });
+  let chatStarted = false;
+  const flag = () => (game.audience
+    ? h("p", { "data-testid": "public-flag", class: "badge" }, gt("game.audience.publicFlag"), h("span", { "data-testid": "public-flag-count" }, String(game.audience.spectators)))
+    : null);
+  const openCloseAudience = () => confirmDialog({
+    title: gt("game.audience.closeTitle"), text: gt("game.audience.closeBody"), confirm: gt("game.audience.close"),
+    cancel: gt("game.audience.keep"), testid: "close-audience-dialog",
+    onConfirm: async () => {
+      const result = await api(`/api/games/${gameId}/audience/close`);
+      if (result.ok) { apply(result.data, 0); return true; }
+      const code = result.error.code;
+      if (code === "NOT_FOUND") { gone = true; render(); return true; }
+      if (["GAME_NOT_ACTIVE", "GAME_NOT_PUBLIC"].includes(code)) { readOnce(); return gt("game.audience.notClosable"); }
+      return gt(code === "network" ? "game.shared.network" : "game.audience.closeFailed");
+    },
+  });
+  const audienceBits = () => [
+    flag(),
+    game.canCloseAudience ? h("p", null, h("button", { type: "button", "data-testid": "close-audience", onclick: openCloseAudience }, gt("game.audience.close"))) : null,
+    game.audienceClosed ? h("p", { role: "status", "data-testid": "audience-closed-note" }, gt("game.audience.closedNote")) : null,
+  ];
+
   // ---- state merging and application --------------------------------------------------------------------------------
   const merge = (current, next, after) => {
     if (next.moveCount < current.moves.length) return current; // an older answer
@@ -298,8 +332,10 @@
         h("label", null, gt("game.room.linkLabel"), linkInput),
         h("p", null, gt("game.room.codeLabel"), ": ", h("strong", { "data-testid": "invite-code" }, inv.code)),
         h("p", null, gt("game.room.validUntil", { date: formatDate(inv.expiresAt) })),
+        qrInvite,
         h("p", null, copy, " ", share, " ", cancel), copyStatus) : null,
       isGuest ? alertBox("warning", gt("game.room.keepBrowser")) : null,
+      h("section", { "data-testid": "chat-panel" }, h("h2", null, gt("chat.title")), h("p", null, gt("chat.waiting"))),
       h("p", null, homeLink()),
     ];
   };
@@ -376,6 +412,7 @@
     }
     return [
       h("h1", { "data-testid": "room-heading" }, gt(finished ? "game.shared.finishedHeading" : "game.field.inProgress")),
+      ...audienceBits(),
       returnNotice ? alertBox("info", returnNotice.text) : null,
       polling, banner,
       finished && wasFinishedOnLoad ? h("p", { role: "status", "data-testid": "reload-note" }, gt("game.field.reloaded")) : null,
@@ -384,6 +421,8 @@
       clockEl(me(), playerLabel(my, me())),
       h("p", { "data-testid": "my-color" }, gt(finished ? "game.field.youPlayed" : "game.field.youPlay", { plays })),
       resign, rematchHost,
+      game.audience ? qrPublic : null,
+      chat.el,
     ];
   };
 
@@ -591,7 +630,10 @@
     const builders = { gone: screenGone, cancelled: screenCancelled, waiting: screenWaiting, joined: screenJoined, opening: screenOpening, board: screenBoard };
     root.dataset.screen = screen;
     root.replaceChildren(...builders[screen]().filter(Boolean));
-    if (screen === "board") renderRematch();
+    if (screen === "board") {
+      renderRematch();
+      if (!chatStarted) { chatStarted = true; chat.start(); }
+    }
     if (screen === "joined") window.setTimeout(render, JOIN_STEP_MS + 50);
     if (focusCell !== null) root.querySelector(`[data-cell="${focusCell}"]`)?.focus();
     paintClocks();

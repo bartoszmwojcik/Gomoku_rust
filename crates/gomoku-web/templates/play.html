@@ -22,6 +22,7 @@
   <p data-error-for="nickname" role="alert"></p>
   <input type="hidden" name="acknowledgedGuestWarning" value="true" data-json="bool">
   <p>{{ ctx.tr.t("home.play.validFor") }}</p>
+  <p><label><input type="checkbox" name="isPublic" data-testid="guest-create-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
   <button type="submit" data-testid="guest-create">{{ ctx.tr.t("home.play.confirmInvitation") }}</button>
 </form>
 <section id="active-game" class="alert warning" role="alert" hidden data-testid="active-game">

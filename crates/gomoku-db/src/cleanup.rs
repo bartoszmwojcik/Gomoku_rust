@@ -41,7 +41,7 @@ pub struct Rule {
     pub clear_column: Option<&'static str>,
 }
 
-pub const RULES: [Rule; 13] = [
+pub const RULES: [Rule; 15] = [
     Rule {
         // 1 h margin: a session that expired mid-game stays until the game ends (games last well under an hour).
         key: "sessions",
@@ -93,6 +93,33 @@ pub const RULES: [Rule; 13] = [
         // correctness; the 1 h margin only absorbs clock skew between the application and the database.
         key: "lobbySeekers",
         table: "lobby_seekers",
+        primary_key: "id",
+        condition: "expires_at < $1",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // The chat is temporary: it goes 1 h after the game ended (the read hides it at exactly 1 h anyway), 1 h after an
+        // unjoined or cancelled game, and 1 h after the clock of an abandoned active game ran out. It is swept before
+        // the games rules so that a game batch never carries a heavy cascade; games that stay as history lose it too.
+        key: "chatMessages",
+        table: "chat_messages",
+        primary_key: "id",
+        condition: "EXISTS (SELECT 1 FROM games g WHERE g.id = chat_messages.game_id AND ( \
+                      (g.status = 'finished' AND g.finished_at < $1) \
+                      OR (g.status = 'cancelled' AND g.created_at < $1) \
+                      OR (g.status = 'active' AND COALESCE(g.turn_started_at + (CASE WHEN (CASE WHEN g.move_count % 2 = 0 THEN g.black_seat ELSE 3 - g.black_seat END) = 1 \
+                                                                  THEN g.clock_ms_1 ELSE g.clock_ms_2 END) * interval '1 millisecond', \
+                                         g.started_at + 900000 * interval '1 millisecond') < $1)))",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: None,
+    },
+    Rule {
+        // Spectator access lives 1 h from the last read and reads filter on `expires_at`; the margin absorbs clock skew.
+        key: "gameSpectators",
+        table: "game_spectators",
         primary_key: "id",
         condition: "expires_at < $1",
         grace_ms: HOUR_MS,
@@ -199,6 +226,8 @@ pub struct CleanupResult {
     pub password_reset_tokens: u64,
     pub email_change_tokens: u64,
     pub lobby_seekers: u64,
+    pub chat_messages: u64,
+    pub game_spectators: u64,
     pub waiting_games: u64,
     pub cancelled_games: u64,
     pub guest_only_active_games: u64,
@@ -219,6 +248,8 @@ impl CleanupResult {
             "passwordResetTokens" => &mut self.password_reset_tokens,
             "emailChangeTokens" => &mut self.email_change_tokens,
             "lobbySeekers" => &mut self.lobby_seekers,
+            "chatMessages" => &mut self.chat_messages,
+            "gameSpectators" => &mut self.game_spectators,
             "waitingGames" => &mut self.waiting_games,
             "cancelledGames" => &mut self.cancelled_games,
             "guestOnlyActiveGames" => &mut self.guest_only_active_games,

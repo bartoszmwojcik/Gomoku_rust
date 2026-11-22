@@ -1033,6 +1033,7 @@ dependencies = [
  "gomoku-core",
  "gomoku-db",
  "http-body-util",
+ "qrcode",
  "rand 0.10.4",
  "reqwest",
  "rpassword",
@@ -2126,6 +2127,12 @@ checksum = "f29a7c4c7a84cef41a53d338a2d10d4f1b043ea5c3dde26db22ee2c9c1b1c75b"
 dependencies = [
  "prost",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ace1a365f55004297f2cf24acfd96d02966246ca423385273b58a7dc873ee14d"
 
 [[package]]
 name = "quick-error"

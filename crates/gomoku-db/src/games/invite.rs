@@ -44,6 +44,14 @@ pub enum PreviewState {
     HasOwnWaitingGame {
         game_id: Uuid,
     },
+    /// A public game in progress: anybody with the code may watch.
+    Watchable {
+        game_id: Uuid,
+    },
+    /// A finished public game: the code opens its review.
+    Reviewable {
+        game_id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +60,7 @@ pub struct PreviewView {
     /// `None` for a deleted account.
     pub creator_name: Option<String>,
     pub creator_is_guest: bool,
+    pub is_public: bool,
 }
 
 /// How the second player joins.
@@ -90,6 +99,7 @@ struct Found {
     creator_user_id: Option<Uuid>,
     creator_name: Option<String>,
     creator_is_guest: bool,
+    is_public: bool,
 }
 
 async fn find_invitation(
@@ -98,7 +108,7 @@ async fn find_invitation(
     now: OffsetDateTime,
 ) -> Result<Option<Found>, GameError> {
     let row = sqlx::query(
-        "SELECT i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, \
+        "SELECT i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, g.is_public, \
                 c.user_id AS creator_user_id, COALESCE(c.display_name, u.display_name) AS creator_account_name, \
                 c.kind AS creator_kind, c.nickname AS creator_nickname \
          FROM invitations i JOIN games g ON g.id = i.game_id \
@@ -126,6 +136,7 @@ async fn find_invitation(
             row.try_get("creator_account_name")?
         },
         creator_is_guest: is_guest,
+        is_public: row.try_get("is_public")?,
     }))
 }
 
@@ -240,6 +251,7 @@ impl Database {
             state,
             creator_name: found.creator_name.clone(),
             creator_is_guest: found.creator_is_guest,
+            is_public: found.is_public,
         };
 
         if let Some(seat) = member_of(&mut conn, viewer, found.game_id, now).await? {
@@ -254,6 +266,17 @@ impl Database {
                 }));
             }
             // The creator of a cancelled game falls through: for them the invitation is simply dead.
+        }
+        // Watching takes no slot, so a viewer who plays elsewhere may watch too.
+        if found.is_public && found.status == GameStatus::Active {
+            return Ok(view(PreviewState::Watchable {
+                game_id: found.game_id,
+            }));
+        }
+        if found.is_public && found.status == GameStatus::Finished {
+            return Ok(view(PreviewState::Reviewable {
+                game_id: found.game_id,
+            }));
         }
         if found.status != GameStatus::Waiting || found.consumed || found.expired {
             return Err(GameError::InvalidInvitation);

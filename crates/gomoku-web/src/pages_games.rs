@@ -14,10 +14,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::app::AppState;
-use crate::game_view::{game_view, iso_ms};
+use crate::game_view::{game_view, iso_ms, spectator_view};
 use crate::guest::guest_token_hash;
 use crate::i18n::Lang;
 use crate::pages::{Ctx, no_referrer, render};
+use crate::routes_chat::resolve_spectator;
 use crate::routes_games::{origin_of, resolve_participant, with_lookup_attempt};
 use crate::routes_lobby::{fetch_history, lobby_json};
 use crate::session::{current_user, require_page_session};
@@ -46,7 +47,7 @@ struct JoinPage {
 #[template(path = "invite.html")]
 struct InvitePage {
     ctx: Ctx,
-    /// `invalid`, `limit`, `joinable`, `has-active-game` or `has-own-waiting-game`.
+    /// `invalid`, `limit`, `joinable`, `has-active-game`, `has-own-waiting-game` or `watch`.
     state: &'static str,
     /// `visitor`, `account` or `guest`.
     viewer: &'static str,
@@ -56,6 +57,7 @@ struct InvitePage {
     game_id: String,
     next: String,
     hint: String,
+    is_public: bool,
 }
 
 #[derive(askama::Template)]
@@ -92,6 +94,8 @@ struct HistoryPage {
 struct ReviewPage {
     ctx: Ctx,
     data: String,
+    /// Opened with the invitation code: the back link goes home, not to the history.
+    by_code: bool,
 }
 
 fn gate(
@@ -173,6 +177,7 @@ pub async fn invite(
         game_id,
         next: safe_next_path(Some(&format!("/invite/{code_display}"))),
         hint: tr.t_with("home.shared.nicknameHint", &[("seat", "2")]),
+        is_public: false,
     };
     let response = match outcome {
         Err(error) if error.status() == axum::http::StatusCode::TOO_MANY_REQUESTS => render(&page(
@@ -206,6 +211,7 @@ pub async fn invite(
             let make = |name: &'static str, game_id: String| {
                 let mut p = page(name, heading.clone(), game_id);
                 p.code_line = code_line.clone();
+                p.is_public = view.is_public;
                 p
             };
             match view.state {
@@ -218,6 +224,16 @@ pub async fn invite(
                 }
                 PreviewState::HasOwnWaitingGame { game_id } => {
                     render(&make("has-own-waiting-game", game_id.to_string()))
+                }
+                PreviewState::Watchable { game_id } => {
+                    let mut watch = make("watch", game_id.to_string());
+                    watch.heading = tr.t("home.invite.heading.watch");
+                    render(&watch)
+                }
+                PreviewState::Reviewable { game_id } => {
+                    let code = normalized.as_deref().unwrap_or_default();
+                    return Redirect::to(&format!("/games/{game_id}/review?code={code}"))
+                        .into_response();
                 }
             }
         }
@@ -255,7 +271,7 @@ pub async fn game_room(
     let participant = match resolve_participant(&state, &jar, &id).await {
         Ok(p) => p,
         Err(error) if error.status() == axum::http::StatusCode::NOT_FOUND => {
-            return gate(&state, locale, user);
+            return spectator_room(&state, locale, user, &jar, &id).await;
         }
         Err(error) => return error.into_response(),
     };
@@ -281,6 +297,7 @@ pub async fn game_room(
     });
     let ctx = Ctx::new(state.catalogs.translator(locale), user, "/").with_bag(&[
         "game.",
+        "chat.",
         "common.",
         "home.shared.",
         "errors.api.",
@@ -291,6 +308,72 @@ pub async fn game_room(
         game_id: participant.game_id.to_string(),
         initial: script_json(&initial),
         secure: state.config.session_cookie_secure,
+    }))
+}
+
+#[derive(askama::Template)]
+#[template(path = "spectate.html")]
+struct SpectatePage {
+    ctx: Ctx,
+    game_id: String,
+    initial: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "audience_closed.html")]
+struct AudienceClosedPage {
+    ctx: Ctx,
+}
+
+/// The game page for somebody who does not play it: a spectator of a public game gets the read-only room (this read
+/// slides their access), the closed audience gets its own screen, everybody else the not-found page.
+async fn spectator_room(
+    state: &AppState,
+    locale: gomoku_core::i18n::Locale,
+    user: Option<crate::session::CurrentUser>,
+    jar: &CookieJar,
+    id: &str,
+) -> Response {
+    let access = match resolve_spectator(state, jar, id).await {
+        Ok(access) => access,
+        Err(error) if error.status() == axum::http::StatusCode::NOT_FOUND => {
+            return gate(state, locale, user);
+        }
+        Err(error) => return error.into_response(),
+    };
+    let now = (state.clock)();
+    let ctx = Ctx::new(state.catalogs.translator(locale), user, "/");
+    let read = match state
+        .db
+        .spectator_state(access.game_id, access.spectator_id, 0, now)
+        .await
+    {
+        Ok(read) => read,
+        Err(GameError::AudienceClosed) => {
+            return no_referrer(render(&AudienceClosedPage {
+                ctx: ctx.with_bag(&["game.audience."]),
+            }));
+        }
+        Err(GameError::NotFound) => return gate(state, locale, ctx.user.clone()),
+        Err(error) => return crate::api::ApiError::from(error).into_response(),
+    };
+    let view = match spectator_view(&read, 0, now) {
+        Ok(view) => view,
+        Err(error) => return crate::api::ApiError::from(error).into_response(),
+    };
+    let initial = json!({ "gameId": access.game_id, "view": view });
+    let ctx = ctx.with_bag(&[
+        "game.",
+        "chat.",
+        "common.",
+        "home.shared.",
+        "errors.api.",
+        "errors.field.",
+    ]);
+    no_referrer(render(&SpectatePage {
+        ctx,
+        game_id: access.game_id.to_string(),
+        initial: script_json(&initial),
     }))
 }
 
@@ -358,27 +441,48 @@ pub async fn history(
     })
 }
 
-/// A finished game, step by step, for one of its account players. Everything else is the same not-found page.
+/// A finished game, step by step: for one of its account players, or for anybody with the code of a public game
+/// (`?code=`, given exactly once). Everything else is the same not-found page.
 pub async fn review(
     State(state): State<AppState>,
     Lang(locale): Lang,
     Path(id): Path<String>,
+    Query(query): Query<Vec<(String, String)>>,
     jar: CookieJar,
 ) -> Response {
-    let user = match require_page_session(&state, &jar, &format!("/games/{id}/review")).await {
-        Ok(user) => user,
-        Err(redirect) => return redirect.into_response(),
+    let codes: Vec<&String> = query
+        .iter()
+        .filter(|(key, _)| key == "code")
+        .map(|(_, value)| value)
+        .collect();
+    let by_code = !codes.is_empty();
+    let user = if by_code {
+        // A reader with a code needs no session and reads none: they are nobody in the game.
+        None
+    } else {
+        match require_page_session(&state, &jar, &format!("/games/{id}/review")).await {
+            Ok(user) => Some(user),
+            Err(redirect) => return redirect.into_response(),
+        }
     };
     let not_found = || {
-        let ctx = Ctx::new(state.catalogs.translator(locale), None, "/history");
+        let ctx = Ctx::new(state.catalogs.translator(locale), None, "/");
         let mut response = render(&ReviewNotFound { ctx });
         *response.status_mut() = axum::http::StatusCode::NOT_FOUND;
-        response
+        no_referrer(response)
     };
     let Ok(game_id) = Uuid::parse_str(&id) else {
         return not_found();
     };
-    let rows = match state.db.open_review(user.id, game_id).await {
+    let opened = match (&user, codes.as_slice()) {
+        (Some(user), _) => state.db.open_review(user.id, game_id).await,
+        (None, [code]) => match normalize_invitation_code(code) {
+            Some(code) => state.db.open_review_by_code(game_id, &code).await,
+            None => return not_found(),
+        },
+        (None, _) => return not_found(),
+    };
+    let rows = match opened {
         Ok(Some(rows)) => rows,
         Ok(None) => return not_found(),
         Err(error) => return crate::api::ApiError::from(error).into_response(),
@@ -416,9 +520,10 @@ pub async fn review(
         "moves": board.moves,
         "result": result.map(|r| json!({ "winnerSeat": r.winner.map(Seat::number), "reason": r.reason.as_str(), "winLine": r.win_line })),
         "players": players,
-        "viewerSeat": rows.viewer_seat.number(),
+        "viewerSeat": rows.viewer_seat.map(Seat::number),
     });
-    let ctx = Ctx::new(state.catalogs.translator(locale), Some(user), "/history");
+    let back = if by_code { "/" } else { "/history" };
+    let ctx = Ctx::new(state.catalogs.translator(locale), user, back);
     let ctx = Ctx {
         bag: merge_bag(
             &ctx,
@@ -436,6 +541,7 @@ pub async fn review(
     no_referrer(render(&ReviewPage {
         ctx,
         data: script_json(&data),
+        by_code,
     }))
 }
 

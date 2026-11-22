@@ -44,6 +44,28 @@ pub const SPECTATOR_PRESENCE_MS: u64 = 15 * 1000;
 pub const SPECTATOR_ACCESS_MS: u64 = HOUR;
 pub const SPECTATOR_TOUCH_INTERVAL_MS: u64 = 10 * 1000;
 
+// --- Chat (F4) ---------------------------------------------------------------------------------------------------
+
+/// Longest message in code points after NFKC + trim (configurable up to [`CHAT_HARD_MAX_LENGTH`]).
+pub const CHAT_MAX_LENGTH: usize = 200;
+/// Ceiling of every configured limit (the database CHECK).
+pub const CHAT_HARD_MAX_LENGTH: usize = 1000;
+/// Longest raw text in UTF-16 units, refused before normalization.
+pub const CHAT_RAW_MAX_UNITS: usize = 1000;
+/// Minimum interval between two messages of one sender.
+pub const CHAT_MIN_INTERVAL_MS: u64 = 2000;
+/// Messages per game, all senders together.
+pub const CHAT_MAX_MESSAGES_PER_GAME: usize = 500;
+/// Default and maximum page of messages.
+pub const CHAT_PAGE_SIZE: usize = 50;
+pub const CHAT_MAX_PAGE_SIZE: usize = 100;
+/// How long the chat stays readable and writable after a game finished (equals the guest token grace).
+pub const CHAT_RETENTION_MS: u64 = GUEST_TOKEN_GRACE_MS;
+/// A run of more than this many combining marks is refused.
+pub const CHAT_MAX_COMBINING_RUN: usize = 4;
+/// Largest message number a cursor may carry.
+pub const CHAT_MAX_SEQ: i64 = 2_147_483_647;
+
 #[cfg(test)]
 mod tests {
     use super::*;

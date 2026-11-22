@@ -133,15 +133,27 @@ impl TestApp {
     pub async fn start_with(overrides: &[(&str, &str)]) -> Self {
         let admin = admin_url().await;
         let name = format!("t_{}", uuid_simple());
-        let admin_db = Database::connect_lazy(&DbConfig {
-            url: format!("{admin}/postgres"),
-            pool_max: 1,
-        })
-        .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
-            .execute(admin_db.pool())
-            .await
+        {
+            // Databases are created one at a time: a loaded machine (coverage runs) otherwise starves the single
+            // administrative connection and a test dies of a pool timeout before it starts.
+            static CREATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _turn = CREATE.lock().await;
+            let admin_db = Database::connect_lazy(&DbConfig {
+                url: format!("{admin}/postgres"),
+                pool_max: 1,
+            })
             .unwrap();
+            let mut attempts = 0;
+            while let Err(error) =
+                sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+                    .execute(admin_db.pool())
+                    .await
+            {
+                attempts += 1;
+                assert!(attempts < 10, "creating the test database failed: {error}");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
         let db = Database::connect_lazy(&DbConfig {
             url: format!("{admin}/{name}"),
             pool_max: 4,

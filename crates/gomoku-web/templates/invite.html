@@ -10,7 +10,21 @@
 <p><a href="/join">{{ ctx.tr.t("home.shared.haveCode") }}</a> · <a href="/">{{ ctx.tr.t("home.shared.backHome") }}</a></p>
 {% else %}
 <p data-testid="code-line">{{ code_line }}</p>
-{% if state == "has-active-game" %}
+{% if is_public %}<section class="alert info" role="status" data-testid="invite-public">{{ ctx.tr.t("home.invite.public") }}</section>{% endif %}
+{% if state == "watch" %}
+<p data-testid="invite-watch-note">{{ ctx.tr.t("home.invite.watchNote") }}</p>
+<form data-api="/api/invitations/{{ code }}/spectate" data-redirect-game data-refresh-on="INVALID_INVITATION" data-testid="watch-form" novalidate>
+  <p data-form-error role="alert" data-testid="form-error"></p>
+  {% if viewer != "account" %}
+  <label for="watch-nickname">{{ ctx.tr.t("home.shared.nickname") }} <small>{{ ctx.tr.t("home.shared.optional") }}</small>
+    <input id="watch-nickname" type="text" name="nickname" maxlength="48" autocomplete="nickname" data-testid="watch-nickname">
+  </label>
+  <small>{{ ctx.tr.t("home.watch.nicknameHint") }}</small>
+  <p data-error-for="nickname" role="alert"></p>
+  {% endif %}
+  <button type="submit" data-testid="watch">{{ ctx.tr.t("home.watch.watch") }}</button>
+</form>
+{% else if state == "has-active-game" %}
 <section class="alert warning" role="alert"><strong>{{ ctx.tr.t("home.shared.activeGame.title") }}</strong> {{ ctx.tr.t("home.invite.oneGame") }}</section>
 <p><a href="/games/{{ game_id }}">{{ ctx.tr.t("home.invite.backToOwn") }}</a></p>
 {% else if state == "has-own-waiting-game" %}

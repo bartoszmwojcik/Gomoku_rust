@@ -80,6 +80,24 @@ pub struct EmailConfig {
 const CLIENT_IP_HEADERS: [&str; 3] = ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"];
 
 /// HTTP and security settings read from the environment.
+/// Limits of the game chat (`CHAT_*`); the defaults are the product's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatConfig {
+    pub max_length: usize,
+    pub min_interval_ms: u64,
+    pub max_messages_per_game: usize,
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            max_length: gomoku_core::constants::CHAT_MAX_LENGTH,
+            min_interval_ms: gomoku_core::constants::CHAT_MIN_INTERVAL_MS,
+            max_messages_per_game: gomoku_core::constants::CHAT_MAX_MESSAGES_PER_GAME,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
@@ -96,6 +114,25 @@ pub struct AppConfig {
     /// E-mail of the installation administrator (`ADMIN_EMAIL`, normalized): nobody can register on it and its
     /// address never changes through the app. Optional until the administrator panel arrives.
     pub admin_email: Option<String>,
+    pub chat: ChatConfig,
+}
+
+/// An integer setting in `min..=max` written as plain digits; unset or empty means the default.
+fn ranged(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+    min: u64,
+    max: u64,
+) -> Result<Option<u64>, ConfigError> {
+    match lookup(name).filter(|raw| !raw.is_empty()) {
+        None => Ok(None),
+        Some(raw) => Some(raw)
+            .filter(|raw| raw.len() <= 9 && raw.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|n| (min..=max).contains(n))
+            .map(Some)
+            .ok_or(ConfigError::Invalid(name)),
+    }
 }
 
 fn positive(
@@ -194,6 +231,15 @@ impl AppConfig {
             brevo_api_key: non_empty("BREVO_API_KEY").map(Secret::new),
             daily_limit: positive(&lookup, "EMAIL_DAILY_LIMIT")?,
         };
+        let chat_defaults = ChatConfig::default();
+        let chat = ChatConfig {
+            max_length: ranged(&lookup, "CHAT_MAX_LENGTH", 1, 1000)?
+                .map_or(chat_defaults.max_length, |n| n as usize),
+            min_interval_ms: ranged(&lookup, "CHAT_MIN_INTERVAL_MS", 0, 3_600_000)?
+                .unwrap_or(chat_defaults.min_interval_ms),
+            max_messages_per_game: ranged(&lookup, "CHAT_MAX_MESSAGES_PER_GAME", 1, 100_000)?
+                .map_or(chat_defaults.max_messages_per_game, |n| n as usize),
+        };
         Ok(Self {
             bind_addr,
             assets_dir,
@@ -207,6 +253,7 @@ impl AppConfig {
             admin_email: lookup("ADMIN_EMAIL")
                 .map(|raw| gomoku_core::validators::normalize_email(&raw))
                 .filter(|email| !email.is_empty()),
+            chat,
         })
     }
 }
@@ -239,6 +286,41 @@ mod tests {
         assert!(!cfg.production && !cfg.session_cookie_secure);
         assert_eq!(cfg.client_ip_header, "x-forwarded-for");
         assert_eq!(cfg.password, PasswordParams::default());
+    }
+
+    #[test]
+    fn chat_limits_default_and_are_validated() {
+        let cfg = AppConfig::from_lookup(env(&[])).unwrap();
+        assert_eq!(cfg.chat, ChatConfig::default());
+        let cfg = AppConfig::from_lookup(env(&[
+            ("CHAT_MAX_LENGTH", "50"),
+            ("CHAT_MIN_INTERVAL_MS", "0"),
+            ("CHAT_MAX_MESSAGES_PER_GAME", "10"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (
+                cfg.chat.max_length,
+                cfg.chat.min_interval_ms,
+                cfg.chat.max_messages_per_game
+            ),
+            (50, 0, 10)
+        );
+        for (name, value) in [
+            ("CHAT_MAX_LENGTH", "0"),
+            ("CHAT_MAX_LENGTH", "1001"),
+            ("CHAT_MIN_INTERVAL_MS", "3600001"),
+            ("CHAT_MIN_INTERVAL_MS", "1e3"),
+            ("CHAT_MAX_MESSAGES_PER_GAME", "100001"),
+            ("CHAT_MAX_MESSAGES_PER_GAME", "-1"),
+            ("CHAT_MAX_LENGTH", "1234567890"),
+        ] {
+            let error = AppConfig::from_lookup(env(&[(name, value)])).unwrap_err();
+            assert!(
+                matches!(error, ConfigError::Invalid(n) if n == name),
+                "{name}={value}"
+            );
+        }
     }
 
     #[test]
