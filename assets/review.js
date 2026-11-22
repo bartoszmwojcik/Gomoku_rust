@@ -24,21 +24,28 @@
   const go = (n) => () => { step = clamp(typeof n === "function" ? n(step) : n); draw(); };
   const status = h("p", { role: "status", "data-testid": "review-step" }, "");
   const outcome = data.result
-    ? (data.viewerSeat === null ? neutralOutcomeOf(data.result, data.blackSeat, data.players) : outcomeOf(data.result, data.viewerSeat))
+    ? (data.viewerSeat === null ? neutralOutcomeOf(data.result, data.blackSeat, data.players, data.variant === "paper") : outcomeOf(data.result, data.viewerSeat, data.variant === "paper"))
     : null;
   const reason = data.result ? gt(`history.reason.${data.result.reason}`) : "";
   const blackSeat = data.blackSeat;
-  root.append(
-    outcome ? h("section", { class: `result ${outcome.kind}`, role: "status", "data-testid": "result" }, gt("review.banner", { reason, detail: outcome.title })) : null,
-    h("p", { "data-testid": "review-finished-at" }, gt("review.finishedAt", { date: data.finishedAt ? formatDate(data.finishedAt) : "" })),
-    h("ul", { "aria-label": gt("review.players"), "data-testid": "review-players" }, data.players.map((p) =>
-      h("li", null, gt("review.playerLine", { side: gt(`game.sides.classic.title.${p.seat === blackSeat ? "black" : "white"}`) }), playerLabel(p, data.viewerSeat)))),
+  const paper = data.variant === "paper";
+  const sideSet = paper ? "paper" : "classic";
+  const stepper = [
     board.el, status,
     h("div", { role: "group", "aria-label": gt("review.steps") },
       h("button", { type: "button", "data-testid": "review-start", onclick: go(0) }, gt("review.start")), " ",
       h("button", { type: "button", "data-testid": "review-prev", onclick: go((n) => n - 1) }, gt("review.previous")), " ",
       h("button", { type: "button", "data-testid": "review-next", onclick: go((n) => n + 1) }, gt("review.next")), " ",
       h("button", { type: "button", "data-testid": "review-end", onclick: go(total) }, gt("review.end"))),
+  ];
+  // A paper game has no move log to step through: a note instead of the board.
+  const note = h("div", { "data-testid": "review-paper-note", class: "alert info", role: "status" }, h("strong", null, gt("review.paperTitle")), " ", gt("review.paperBody"));
+  root.append(
+    outcome ? h("section", { class: `result ${outcome.kind}`, role: "status", "data-testid": "result" }, gt("review.banner", { reason, detail: outcome.title })) : null,
+    h("p", { "data-testid": "review-finished-at" }, gt("review.finishedAt", { date: data.finishedAt ? formatDate(data.finishedAt) : "" })),
+    h("ul", { "aria-label": gt("review.players"), "data-testid": "review-players" }, data.players.map((p) =>
+      h("li", null, gt("review.playerLine", { side: gt(`game.sides.${sideSet}.title.${p.seat === blackSeat ? "black" : "white"}`) }), playerLabel(p, data.viewerSeat)))),
+    ...(paper ? [note, ...[]] : stepper),
   );
-  draw();
+  if (!paper) draw();
 })();

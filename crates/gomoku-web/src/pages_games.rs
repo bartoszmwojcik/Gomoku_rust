@@ -7,7 +7,7 @@ use gomoku_core::auth::safe_next_path;
 use gomoku_core::constants::INITIAL_CLOCK_MS;
 use gomoku_core::game::BoardRow;
 use gomoku_core::invitation_code::{format_invitation_code, normalize_invitation_code};
-use gomoku_core::types::Seat;
+use gomoku_core::types::{GameVariant, Seat};
 use gomoku_db::Uuid;
 use gomoku_db::games::{GameError, PreviewState, Viewer};
 use serde::Deserialize;
@@ -116,7 +116,7 @@ pub async fn play(State(state): State<AppState>, Lang(locale): Lang, jar: Cookie
     let tr = state.catalogs.translator(locale);
     let hint = tr.t_with("home.shared.nicknameHint", &[("seat", "1")]);
     render(&PlayPage {
-        ctx: Ctx::new(tr, user, "/play").with_bag(&["errors.api."]),
+        ctx: Ctx::new(tr, user, "/play").with_bag(&["errors.api.", "home.settings."]),
         signed_in,
         hint,
     })
@@ -200,10 +200,25 @@ pub async fn invite(
                 ),
                 (Some(name), false) => tr.t_with("home.invite.heading.creator", &[("name", name)]),
             };
-            let rules = tr.t_plural(
-                "home.settings.classicRules",
-                u64::try_from(INITIAL_CLOCK_MS / 60_000).unwrap_or(10),
-            );
+            let rules = match view.settings.variant {
+                GameVariant::Paper => {
+                    let line = tr.t_with(
+                        "home.settings.line",
+                        &[
+                            ("variant", &tr.t("home.settings.variants.paper")),
+                            (
+                                "minutes",
+                                &(view.settings.time_control_ms / 60_000).to_string(),
+                            ),
+                        ],
+                    );
+                    tr.t_with("home.settings.paperRules", &[("settings", &line)])
+                }
+                GameVariant::Classic => tr.t_plural(
+                    "home.settings.classicRules",
+                    u64::try_from(INITIAL_CLOCK_MS / 60_000).unwrap_or(10),
+                ),
+            };
             let code_line = tr.t_with(
                 "home.invite.codeLine",
                 &[("code", &code_display), ("rules", &rules)],
@@ -411,7 +426,7 @@ pub async fn lobby(State(state): State<AppState>, Lang(locale): Lang, jar: Cooki
 }
 
 fn merge_bag(ctx: &Ctx, extra: &[&str]) -> String {
-    let mut prefixes = vec!["home.shared.", "common.", "errors.api."];
+    let mut prefixes = vec!["home.shared.", "home.settings.", "common.", "errors.api."];
     prefixes.extend_from_slice(extra);
     ctx.tr.bag_json(&prefixes)
 }
@@ -487,21 +502,33 @@ pub async fn review(
         Ok(None) => return not_found(),
         Err(error) => return crate::api::ApiError::from(error).into_response(),
     };
-    let board = gomoku_core::game::board_view(
-        &BoardRow {
-            status: rows.game.status,
-            black_seat: rows.game.black_seat,
-            move_count: rows.game.move_count,
-            moves: &rows.game.moves,
-            winner: rows.game.winner,
-            end_reason: rows.game.end_reason,
-        },
-        0,
-    );
-    let Ok(board) = board else {
-        return crate::api::ApiError::from(GameError::Corrupt).into_response();
+    let paper = rows.game.variant == gomoku_core::types::GameVariant::Paper;
+    let (moves, result) = if paper {
+        // A paper game has no move log to step through; the result is what the review shows.
+        let result = rows.game.end_reason.map(|reason| {
+            json!({ "winnerSeat": rows.game.winner.map(Seat::number), "reason": reason.as_str(), "winLine": null })
+        });
+        (json!([]), result)
+    } else {
+        let board = gomoku_core::game::board_view(
+            &BoardRow {
+                status: rows.game.status,
+                black_seat: rows.game.black_seat,
+                move_count: rows.game.move_count,
+                moves: &rows.game.moves,
+                winner: rows.game.winner,
+                end_reason: rows.game.end_reason,
+            },
+            0,
+        );
+        let Ok(board) = board else {
+            return crate::api::ApiError::from(GameError::Corrupt).into_response();
+        };
+        let result = board.result.as_ref().map(|r| {
+            json!({ "winnerSeat": r.winner.map(Seat::number), "reason": r.reason.as_str(), "winLine": r.win_line })
+        });
+        (json!(board.moves), result)
     };
-    let result = board.result.as_ref();
     let players: Vec<Value> = rows
         .players
         .iter()
@@ -517,8 +544,9 @@ pub async fn review(
         "gameId": rows.game.id,
         "finishedAt": rows.game.finished_at.map(iso_ms),
         "blackSeat": rows.game.black_seat.map(Seat::number),
-        "moves": board.moves,
-        "result": result.map(|r| json!({ "winnerSeat": r.winner.map(Seat::number), "reason": r.reason.as_str(), "winLine": r.win_line })),
+        "variant": rows.game.variant.as_str(),
+        "moves": moves,
+        "result": result,
         "players": players,
         "viewerSeat": rows.viewer_seat.map(Seat::number),
     });

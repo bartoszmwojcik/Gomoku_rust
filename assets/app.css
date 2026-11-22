@@ -52,3 +52,24 @@ ul.history li, ul.seekers li { padding: 0.5rem 0; border-bottom: 1px solid var(-
 .badge { display: inline-block; border: 1px solid var(--board-line); padding: 0.15rem 0.5rem; }
 .qr { display: block; width: 100%; max-width: 200px; aspect-ratio: 1; background: #fff; }
 .result.neutral, .result.draw { border-left: 6px solid var(--board-line); padding: 0.5rem 0.75rem; }
+.paper-board { max-width: 100%; }
+.paper-sheet { background: linear-gradient(135deg, var(--paper-surface, #f4ecd8), var(--paper-surface-2, #efe3c4)); color: var(--paper-ink, #1d1a14); padding: 0.5rem; border: 1px solid var(--board-line); }
+.paper-frame { position: relative; touch-action: none; user-select: none; }
+.paper-grid { display: grid; grid-template-rows: repeat(var(--level, 21), 1fr); width: min(100%, 36rem); margin: 0 auto; aspect-ratio: 1; }
+.paper-row { display: grid; grid-template-columns: repeat(var(--level, 21), 1fr); }
+.paper-row [role="gridcell"] { display: block; min-width: 0; }
+.paper-cell { display: block; width: 100%; aspect-ratio: 1; min-width: 0; min-height: 0; padding: 0; background: transparent; border: 0; border-top: 1px solid var(--paper-line, #b8a98a); border-left: 1px solid var(--paper-line, #b8a98a); border-radius: 0; color: inherit; cursor: pointer; }
+.paper-cell.edge-left { border-left-width: 3px; }
+.paper-cell.edge-top { border-top-width: 3px; }
+.paper-cell.refused { cursor: not-allowed; }
+.paper-cell:not(.refused):not(.stone) { background: var(--paper-allowed, rgba(0, 0, 0, 0.03)); }
+.paper-cell.last { outline: 2px solid var(--paper-pencil, #555); outline-offset: -2px; }
+.paper-cell.selected { outline: 2px dashed var(--paper-pencil, #555); outline-offset: -2px; }
+.paper-mark { width: 84%; height: 84%; display: block; margin: 8%; }
+.paper-mark.framed { width: 1.4rem; height: 1.4rem; display: inline-block; vertical-align: middle; margin: 0 0.25rem; background: var(--paper-surface, #f4ecd8); border: 1px solid var(--board-line); color: var(--paper-ink, #1d1a14); }
+.paper-fives { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.paper-tools { display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center; margin: 0.5rem 0; }
+.paper-toolbar, .paper-selection-bar { display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center; }
+.paper-selection-bar button, .paper-toolbar button { min-height: 2.75rem; min-width: 2.75rem; }
+.settings fieldset { border: 1px solid var(--board-line); margin: 0.5rem 0; }
+.settings [role="radio"], .settings label { min-height: 2.75rem; display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 0.75rem; }

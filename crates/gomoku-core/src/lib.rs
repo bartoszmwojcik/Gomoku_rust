@@ -14,6 +14,7 @@ pub mod i18n;
 pub mod invitation_code;
 pub mod lobby;
 pub mod nickname;
+pub mod paper;
 pub mod rematch;
 pub mod resign;
 pub mod return_notice;
@@ -25,8 +26,7 @@ pub mod validators;
 /// Side length of the classic (free-style) board.
 pub const CLASSIC_BOARD_SIZE: usize = rules::BOARD_SIZE;
 
-/// Side length of the "paper and pencil" variant board.
-pub const PAPER_BOARD_SIZE: usize = 101;
+pub use paper::PAPER_BOARD_SIZE;
 
 #[cfg(test)]
 mod tests {

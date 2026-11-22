@@ -1,7 +1,7 @@
 //! A player's history and the review of a finished game.
 
 use gomoku_core::history::HISTORY_PAGE_SIZE;
-use gomoku_core::types::{EndReason, Seat};
+use gomoku_core::types::{EndReason, GameVariant, Seat};
 use sqlx::Row;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -24,6 +24,9 @@ pub struct HistoryEntryRow {
     /// `None` for a deleted account; a guest's name is derived by the caller when this is `None`.
     pub opponent_name: Option<String>,
     pub opponent_nickname: Option<String>,
+    pub variant: GameVariant,
+    /// `[mine, theirs]` for a paper game (from the cache the game keeps), `None` for a classic one.
+    pub scores: Option<[u32; 2]>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +65,10 @@ impl Database {
         let sql = format!(
             "SELECT g.id, to_char(g.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS finished_at, \
                     g.end_reason, g.winner_seat, me.seat AS my_seat, op.kind AS opponent_kind, op.seat AS opponent_seat, \
-                    op.nickname AS opponent_nickname, COALESCE(op.display_name, u.display_name) AS opponent_name \
+                    op.nickname AS opponent_nickname, COALESCE(op.display_name, u.display_name) AS opponent_name, g.variant, ps.score_1, ps.score_2 \
              FROM game_players me JOIN games g ON g.id = me.game_id AND g.status = 'finished' \
              JOIN game_players op ON op.game_id = g.id AND op.seat <> me.seat LEFT JOIN users u ON u.id = op.user_id \
+             LEFT JOIN paper_game_states ps ON ps.game_id = g.id \
              WHERE me.user_id = $1 {} ORDER BY g.finished_at DESC, g.id DESC LIMIT {}",
             if cursor.is_some() {
                 "AND (g.finished_at, g.id) < ($2::timestamptz, $3::uuid)"
@@ -83,12 +87,35 @@ impl Database {
         for row in rows.iter().take(HISTORY_PAGE_SIZE) {
             let reason: String = row.try_get("end_reason")?;
             let winner: Option<i16> = row.try_get("winner_seat")?;
+            let my_seat = seat(row.try_get("my_seat")?)?;
+            let variant = GameVariant::parse(&row.try_get::<String, _>("variant")?)
+                .ok_or(GameError::Corrupt)?;
+            let scores = match (
+                variant,
+                row.try_get::<Option<i32>, _>("score_1")?,
+                row.try_get::<Option<i32>, _>("score_2")?,
+            ) {
+                (GameVariant::Paper, Some(one), Some(two)) => {
+                    let (one, two) = (
+                        u32::try_from(one).unwrap_or(0),
+                        u32::try_from(two).unwrap_or(0),
+                    );
+                    Some(if my_seat == Seat::One {
+                        [one, two]
+                    } else {
+                        [two, one]
+                    })
+                }
+                _ => None,
+            };
             entries.push(HistoryEntryRow {
+                variant,
+                scores,
                 game_id: row.try_get("id")?,
                 finished_at: row.try_get("finished_at")?,
                 reason: EndReason::parse(&reason).ok_or(GameError::Corrupt)?,
                 winner: winner.map(seat).transpose()?,
-                my_seat: seat(row.try_get("my_seat")?)?,
+                my_seat,
                 opponent_kind: row.try_get("opponent_kind")?,
                 opponent_seat: seat(row.try_get("opponent_seat")?)?,
                 opponent_name: row.try_get("opponent_name")?,

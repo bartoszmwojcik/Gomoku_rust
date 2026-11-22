@@ -1,6 +1,7 @@
 //! How game refusals are answered: status, code, Polish message and machine-readable data.
 
 use axum::http::StatusCode;
+use gomoku_core::auth::FieldIssue;
 use gomoku_db::games::GameError;
 use serde_json::json;
 
@@ -58,8 +59,38 @@ impl From<GameError> for ApiError {
             GameError::GameNotStarted => {
                 conflict("GAME_NOT_STARTED", "Czekamy, aż przeciwnik otworzy partię.")
             }
-            GameError::NotYourTurn => conflict("NOT_YOUR_TURN", "Teraz ruch przeciwnika.")
-                .with_data(json!({ "reason": "opponent_turn" })),
+            GameError::NotYourTurn { auto: true } => {
+                conflict("NOT_YOUR_TURN", "Automat stawia kamień.")
+                    .with_data(json!({ "reason": "auto_turn" }))
+            }
+            GameError::NotYourTurn { auto: false } => {
+                conflict("NOT_YOUR_TURN", "Teraz ruch przeciwnika.")
+                    .with_data(json!({ "reason": "opponent_turn" }))
+            }
+            GameError::FirstMoveCenter => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "FIRST_MOVE_CENTER",
+                "Pierwszy kamień trafia na środek planszy.",
+            ),
+            GameError::MoveTooFar => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "MOVE_TOO_FAR",
+                "Kamień może stać najwyżej 3 pola od innego.",
+            ),
+            GameError::OffBoard => ApiError::validation("Pole jest poza planszą."),
+            GameError::MoveOutOfRange { x, y, number } => {
+                let mut fields = Vec::new();
+                if x {
+                    fields.push(("x", vec![FieldIssue::ColumnInvalid]));
+                }
+                if y {
+                    fields.push(("y", vec![FieldIssue::RowInvalid]));
+                }
+                if number {
+                    fields.push(("moveNumber", vec![FieldIssue::MoveNumberInvalid]));
+                }
+                ApiError::invalid_fields(fields)
+            }
             GameError::StaleMove => conflict("STALE_MOVE", "Plansza zmieniła się — odśwież widok."),
             GameError::CellOccupied => conflict("CELL_OCCUPIED", "To pole jest już zajęte."),
             GameError::BadAfter => ApiError::validation("Nieprawidłowy parametr after."),

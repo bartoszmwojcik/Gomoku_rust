@@ -18,6 +18,10 @@ use gomoku_core::invitation_code::{
     format_invitation_code, generate_invitation_code, invitation_url, normalize_invitation_code,
 };
 use gomoku_core::nickname::{NicknameError, validate_nickname};
+use gomoku_core::paper::{
+    Field, GameSettings, PAPER_CELLS, SettingsIssue, is_paper_time_control, resolve_game_settings,
+};
+use gomoku_core::types::GameVariant;
 use gomoku_db::games::{
     AcceptInput, CreatedGame, GameError, GuestCreateInput, JoinAs, MoveInput, Snapshot, to_ms,
 };
@@ -141,6 +145,44 @@ fn public_flag(body: &Value) -> Result<bool, ApiError> {
     }
 }
 
+/// `variant` and `timeControlMs` of a create (or lobby) body: unknown keys are ignored, wrong values are field errors, a
+/// time without the paper variant is refused only when both fields are well-formed on their own.
+pub(crate) fn game_settings(body: &Value) -> Result<GameSettings, ApiError> {
+    let variant = match body.get("variant") {
+        None => Field::Absent,
+        Some(Value::String(text)) => GameVariant::parse(text).map_or(Field::Invalid, Field::Valid),
+        Some(_) => Field::Invalid,
+    };
+    let time = match body.get("timeControlMs") {
+        None => Field::Absent,
+        Some(value) => value
+            .as_i64()
+            .filter(|ms| is_paper_time_control(*ms))
+            .map_or(Field::Invalid, Field::Valid),
+    };
+    resolve_game_settings(variant, time).map_err(|issues| {
+        let mut error = ApiError::validation("Nieprawidłowe dane.");
+        for issue in issues {
+            error = match issue {
+                SettingsIssue::VariantInvalid => {
+                    error.with_field("variant", "invalid_value", "Nieprawidłowy wariant partii.")
+                }
+                SettingsIssue::TimeControlInvalid => error.with_field(
+                    "timeControlMs",
+                    "invalid_union",
+                    "Nieprawidłowy czas partii.",
+                ),
+                SettingsIssue::TimeControlClassic => error.with_field(
+                    "timeControlMs",
+                    "TIME_CONTROL_CLASSIC",
+                    "Czas partii można wybrać tylko w wariancie „papier i ołówek”.",
+                ),
+            };
+        }
+        error
+    })
+}
+
 fn new_code() -> String {
     generate_invitation_code(random_int)
 }
@@ -157,7 +199,9 @@ pub async fn create_game(
     let now = (state.clock)();
     let secure = state.config.session_cookie_secure;
     if let Some(user) = current_user(&state, &jar).await {
-        let is_public = public_flag(&read_optional_json(body, &headers).await?)?;
+        let body = read_optional_json(body, &headers).await?;
+        let is_public = public_flag(&body)?;
+        let settings = game_settings(&body)?;
         rate_limit(
             &state,
             &format!("games-create:{}", user.id),
@@ -170,6 +214,7 @@ pub async fn create_game(
             .create_game_account(
                 user.id,
                 is_public,
+                settings,
                 now,
                 INVITATION_TTL_MS as i64,
                 &mut new_code,
@@ -181,6 +226,7 @@ pub async fn create_game(
     let body = read_json(body, &headers).await?;
     let nickname = guest_fields(&body)?;
     let is_public = public_flag(&body)?;
+    let settings = game_settings(&body)?;
     let key = crate::client_address::client_key(&headers, "games-create-guest", &state.config)
         .map_err(|_| {
             ApiError::internal_logged("client address", &"unavailable behind the proxy")
@@ -200,6 +246,7 @@ pub async fn create_game(
         nickname: nickname.as_deref(),
         cancel_own_waiting_game: bool_field(&body, "cancelOwnWaitingGame") == Some(true),
         is_public,
+        settings,
     };
     let created = state
         .db
@@ -217,7 +264,11 @@ pub(crate) fn parse_after(query: &HashMap<String, String>) -> Result<usize, ApiE
         None => Ok(0),
         Some(raw) if (1..=5).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_digit()) => raw
             .parse()
-            .map_err(|_| ApiError::invalid_fields(vec![("after", vec![FieldIssue::AfterInvalid])])),
+            .ok()
+            .filter(|after| *after <= PAPER_CELLS)
+            .ok_or_else(|| {
+                ApiError::invalid_fields(vec![("after", vec![FieldIssue::AfterInvalid])])
+            }),
         Some(_) => Err(ApiError::invalid_fields(vec![(
             "after",
             vec![FieldIssue::AfterInvalid],
@@ -285,16 +336,15 @@ pub async fn get_game(
     Ok((jar, response))
 }
 
-/// A board coordinate or move number as the schema allows it first (0..100, 1..10201), then the classic board bounds.
+/// A move as the wire allows it for either variant (x, y in 0..100, the number in 1..10201); the classic board's own
+/// bounds are checked once the game is known.
 fn move_input(body: &Value) -> Result<MoveInput, ApiError> {
-    let x = int_field(body, "x");
-    let y = int_field(body, "y");
-    let number = int_field(body, "moveNumber");
-    let in_range = |value: Option<i64>, max: i64| value.filter(|v| (0..=max).contains(v));
+    let in_range =
+        |value: Option<i64>, min: i64, max: i64| value.filter(|v| (min..=max).contains(v));
+    let x = in_range(int_field(body, "x"), 0, 100);
+    let y = in_range(int_field(body, "y"), 0, 100);
+    let number = in_range(int_field(body, "moveNumber"), 1, PAPER_CELLS as i64);
     let mut fields: Vec<(&str, Vec<FieldIssue>)> = Vec::new();
-    let x = in_range(x, 100).filter(|v| *v <= 14);
-    let y = in_range(y, 100).filter(|v| *v <= 14);
-    let number = number.filter(|v| (1..=225).contains(v));
     if x.is_none() {
         fields.push(("x", vec![FieldIssue::ColumnInvalid]));
     }
@@ -307,9 +357,9 @@ fn move_input(body: &Value) -> Result<MoveInput, ApiError> {
     let (Some(x), Some(y), Some(number)) = (x, y, number) else {
         return Err(ApiError::invalid_fields(fields));
     };
-    let cell = usize::try_from(y * 15 + x).map_err(|_| ApiError::internal())?;
     Ok(MoveInput {
-        cell,
+        x: i32::try_from(x).map_err(|_| ApiError::internal())?,
+        y: i32::try_from(y).map_err(|_| ApiError::internal())?,
         move_number: usize::try_from(number).map_err(|_| ApiError::internal())?,
     })
 }

@@ -238,3 +238,20 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Weryfikacja: 25 testów HTTP/DB (w tym wyścigi), ręcznie w przeglądarce (publiczna partia, czat gracz–gracz–widz, przełącznik, wyłącznik publiczności, QR).
   Pokrycie: core 100%, db 96%, web 96%.
 - Nie sprawdzono: dotyk/mobile, czytnik ekranu (live regions czatu), zachowanie przy bardzo dużej liczbie wiadomości w przeglądarce.
+
+### F5 — Papier i ołówek (zrobione, jeden PR)
+
+- Kontrakt: `.ai/docs/2026-11-23-f5-contract.md`. Rdzeń: `gomoku-core::paper` (arkusz 101×101, reguła „najwyżej 3 pola od kamienia”, punkty za piątki
+  przeliczane z kamieni, ruch automatu, leniwa oś czasu `resolve_paper_clock`, ustawienia gry) — 100% pokrycia, w tym testy własnościowe punktów.
+- Baza (migracja 0007, tylko w przód): `games.variant/time_control_ms`, `paper_game_states`, `paper_moves`, ustawienia w `lobby_seekers`; rozliczanie
+  czasu i ruch automatu pod blokadą wiersza gry; sprzątanie ma jeden wspólny wzór terminu partii (także dla wariantu papierowego).
+- Web: `variant`/`timeControlMs` przy tworzeniu partii i w lobby, widok `paper` (kamienie, punkty, piątki, automat), błędy `FIRST_MOVE_CENTER`/`MOVE_TOO_FAR`/
+  `NOT_YOUR_TURN (auto_turn)`; granice ruchu klasycznego sprawdzane w serwisie po ustaleniu partii (kontrakt klasyczny bez zmian).
+  UI: `paper-board.js` (okno na arkusz, powiększanie, przesuwanie, piątki jako linie), wybór wariantu i czasu (`settings.js`), historia, przegląd (notatka), widz.
+- Odstępstwa: losowość automatu bez wstrzykiwania (CSPRNG systemu; testy sprawdzają własności, nie konkretną komórkę); kolumna `last_move_at` pominięta
+  (w Node tylko zapis); logika widoku planszy tylko w JS (decyzja 11.3-2 kontraktu).
+- Nie zrobione / nie sprawdzono: szczypanie (pinch) i zapamiętanie powiększenia w `localStorage`, tryb wysokiego kontrastu, ostrzeżenie o nieznanym wariancie,
+  pliki „golden” z Node dla punktacji i automatu, dotyk/mobile w prawdziwej przeglądarce (układ telefonu nieprzejrzany wizualnie).
+- Weryfikacja: 13 testów HTTP/DB (reguły, punkty, koniec na punkty, automat, poddanie, rewanż, lobby, historia, widz, sprzątanie), ręcznie w przeglądarce
+  (partia 1 min i 5 min: kamienie, punkty 1:1, poddanie, historia, przegląd). Pokrycie: core 100%, db 96%, web 96%.
+- Środowisko: testy zostawiały kontenery PostgreSQL — `scripts/coverage.sh` sprząta teraz te, które sam utworzył.

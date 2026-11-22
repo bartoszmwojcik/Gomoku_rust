@@ -27,11 +27,14 @@ use crate::api::{ApiError, ok, read_optional_json};
 use crate::app::AppState;
 use crate::game_view::iso_ms;
 use crate::routes_auth::rate_limit;
-use crate::routes_games::random_int;
+use crate::routes_games::{game_settings, random_int};
 use crate::routes_password::require_session;
 
 fn me_json(status: &SeekingStatus) -> Value {
-    json!({ "id": status.id, "createdAt": iso_ms(status.created_at), "expiresInMs": status.expires_in_ms })
+    json!({
+        "id": status.id, "createdAt": iso_ms(status.created_at), "expiresInMs": status.expires_in_ms,
+        "variant": status.settings.variant.as_str(), "timeControlMs": status.settings.time_control_ms,
+    })
 }
 
 /// The lobby as the signed-in account sees it. Times are relative (the client counts down on its own monotonic clock).
@@ -50,6 +53,7 @@ pub fn lobby_json(view: &gomoku_db::games::LobbyRows) -> Value {
         "currentGame": view.current_game.map(|g| json!({ "gameId": g.game_id, "status": g.status.as_str() })),
         "seekers": view.seekers.iter().map(|s| json!({
             "id": s.id, "displayName": s.display_name, "sinceMs": s.since_ms, "expiresInMs": s.expires_in_ms,
+            "variant": s.settings.variant.as_str(), "timeControlMs": s.settings.time_control_ms,
         })).collect::<Vec<_>>(),
     })
 }
@@ -62,7 +66,7 @@ pub async fn mark_seeking(
     body: Body,
 ) -> Result<Response, ApiError> {
     let user = require_session(&state, &jar).await?;
-    read_optional_json(body, &headers).await?;
+    let settings = game_settings(&read_optional_json(body, &headers).await?)?;
     rate_limit(
         &state,
         &format!("lobby-mark:{}", user.id),
@@ -72,7 +76,7 @@ pub async fn mark_seeking(
     .await?;
     let status = state
         .db
-        .mark_seeking(user.id, (state.clock)(), SEEKING_TTL_MS as i64)
+        .mark_seeking(user.id, (state.clock)(), SEEKING_TTL_MS as i64, settings)
         .await?;
     Ok(ok(StatusCode::OK, json!({ "me": me_json(&status) })))
 }
@@ -138,8 +142,9 @@ pub fn history_entry_json(entry: &HistoryEntryRow) -> Value {
         ),
         _ => entry.opponent_name.clone(),
     };
-    json!({
+    let mut entry_json = json!({
         "gameId": entry.game_id,
+        "variant": entry.variant.as_str(),
         "finishedAt": iso_from_micros(&entry.finished_at),
         "result": match history_result_of(entry.winner, entry.my_seat) {
             gomoku_core::history::HistoryResult::Win => "win",
@@ -148,7 +153,11 @@ pub fn history_entry_json(entry: &HistoryEntryRow) -> Value {
         },
         "reason": entry.reason.as_str(),
         "opponent": { "kind": entry.opponent_kind, "name": name },
-    })
+    });
+    if let (Some(scores), Some(object)) = (entry.scores, entry_json.as_object_mut()) {
+        object.insert("scores".into(), json!(scores));
+    }
+    entry_json
 }
 
 /// The account's finished games, newest first. Order: query (400), session (401), then the read.

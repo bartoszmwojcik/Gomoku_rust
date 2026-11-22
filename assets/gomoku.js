@@ -120,7 +120,23 @@
   };
 
   /** The result of a finished game from the viewpoint of `mySeat`: the banner kind and its two texts. */
-  const outcomeOf = (result, mySeat) => {
+  const scoreText = (result, mySeat) => `${result.scores[mySeat - 1]} : ${result.scores[2 - mySeat]}`;
+
+  const outcomeOf = (result, mySeat, paper = false) => {
+    if (paper || result.scores) {
+      const score = result.scores ? scoreText(result, mySeat) : "";
+      if (result.reason === "points") {
+        if (result.winnerSeat === null) return { kind: "draw", title: score ? gt("game.outcome.drawScore", { score }) : gt("game.outcome.draw"), detail: score ? gt("game.outcome.pointsDetail") : "" };
+        const won = result.winnerSeat === mySeat;
+        return { kind: won ? "win" : "loss", title: score ? gt(won ? "game.outcome.winScore" : "game.outcome.lossScore", { score }) : gt(won ? "game.outcome.pointsWon" : "game.outcome.pointsLost"), detail: score ? gt("game.outcome.pointsDetail") : "" };
+      }
+      if (result.reason === "resignation") {
+        const won = result.winnerSeat === mySeat;
+        return score
+          ? { kind: won ? "win" : "loss", title: gt(won ? "game.outcome.resignWonScore" : "game.outcome.resignLostScore"), detail: gt("game.outcome.resignedScore", { score }) }
+          : { kind: won ? "win" : "loss", title: gt(won ? "game.outcome.resignWon" : "game.outcome.resignLost"), detail: "" };
+      }
+    }
     if (result.reason === "draw") return { kind: "draw", title: gt("game.outcome.draw"), detail: gt("game.outcome.drawFull") };
     const won = result.winnerSeat === mySeat;
     const titles = {
@@ -133,18 +149,20 @@
   };
 
   /** The banner for a reader who did not play (a spectator, a review by code): never "you won". */
-  const neutralOutcomeOf = (result, blackSeat, players) => {
+  const neutralOutcomeOf = (result, blackSeat, players, paper = false) => {
+    const set = paper ? "paper" : "classic";
+    const score = result.scores ? gt("game.outcome.neutral.score", { score: `${Math.max(...result.scores)} : ${Math.min(...result.scores)}` }) : "";
     if (result.reason === "draw") return { kind: "draw", title: gt("game.outcome.draw"), detail: gt("game.outcome.neutral.draw") };
+    if (result.winnerSeat === null) return { kind: "draw", title: gt("game.outcome.neutral.drawScore", { score: result.scores ? `${result.scores[0]} : ${result.scores[1]}` : "" }), detail: gt("game.outcome.neutral.pointsEqual") };
     const winner = players.find((p) => p.seat === result.winnerSeat);
     const colour = result.winnerSeat === blackSeat ? "black" : "white";
     return {
       kind: "neutral",
-      title: gt("game.outcome.neutral.win", { wins: gt(`game.sides.classic.wins.${colour}`), name: winner ? playerLabelOf(winner) : "", score: "" }),
+      title: gt("game.outcome.neutral.win", { wins: gt(`game.sides.${set}.wins.${colour}`), name: winner ? playerLabelOf(winner) : "", score }),
       detail: gt(`game.outcome.neutral.${result.reason}`),
     };
   };
 
-  /** A player's label: "Ty (Ala)", "Gracz 2 (gość)", "Usunięty gracz". */
   const playerLabelOf = (player) => playerLabel(player, null);
   const playerLabel = (player, mySeat) => {
     const mine = player.seat === mySeat;

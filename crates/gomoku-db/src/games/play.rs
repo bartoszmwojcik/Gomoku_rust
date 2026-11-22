@@ -5,21 +5,24 @@ use gomoku_core::clock::spend;
 use gomoku_core::game::{is_valid_after, replay};
 use gomoku_core::resign::{ResignRejection, resolve_resignation};
 use gomoku_core::rules::seat_on_turn;
-use gomoku_core::types::{EndReason, GameResult, GameStatus, Seat};
+use gomoku_core::types::{EndReason, GameResult, GameStatus, GameVariant, Seat};
 use sqlx::{PgConnection, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use super::paper::{PaperMove, play_paper_move};
 use super::{
     GAME_COLUMNS, GameError, GameRow, Scope, Snapshot, cancel_not_started, expire_waiting,
     read_game, record_finished, release_slots, settle_expired, settle_game, snapshot, to_ms,
 };
 use crate::Database;
 
-/// A move as the client sent it, already validated against the board.
+/// A move as the client sent it: absolute coordinates within the widest sheet (0..100); the classic board is checked
+/// against its own bounds once the game is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoveInput {
-    pub cell: usize,
+    pub x: i32,
+    pub y: i32,
     /// The number of the move the client means to play: `move_count + 1` of the position it sees.
     pub move_number: usize,
 }
@@ -72,13 +75,13 @@ impl Database {
         now: OffsetDateTime,
     ) -> Result<Snapshot, GameError> {
         let mut tx = self.pool().begin().await?;
-        let row = sqlx::query("SELECT g.move_count FROM game_players p JOIN games g ON g.id = p.game_id WHERE p.id = $1 AND g.id = $2")
+        let row = sqlx::query("SELECT COALESCE(ps.move_count, g.move_count::int4) AS move_count FROM game_players p JOIN games g ON g.id = p.game_id LEFT JOIN paper_game_states ps ON ps.game_id = g.id WHERE p.id = $1 AND g.id = $2")
             .bind(player_id)
             .bind(game_id)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(GameError::NotFound)?;
-        let move_count = usize::try_from(row.try_get::<i16, _>("move_count")?)
+        let move_count = usize::try_from(row.try_get::<i32, _>("move_count")?)
             .map_err(|_| GameError::Corrupt)?;
         if !is_valid_after(after, move_count) {
             return Err(GameError::BadAfter);
@@ -120,12 +123,30 @@ impl Database {
     ) -> MoveOutcome {
         let mut tx = self.pool().begin().await?;
         let (game, seat) = lock_for_play(&mut tx, game_id, player_id).await?;
+        if game.variant == GameVariant::Paper {
+            let mv = PaperMove {
+                x: input.x,
+                y: input.y,
+                move_number: input.move_number,
+            };
+            return play_paper_move(tx, game_id, player_id, seat, mv, now).await;
+        }
+        let (x_bad, y_bad) = (!(0..15).contains(&input.x), !(0..15).contains(&input.y));
+        let number_bad = !(1..=225).contains(&input.move_number);
+        if x_bad || y_bad || number_bad {
+            return Err(GameError::MoveOutOfRange {
+                x: x_bad,
+                y: y_bad,
+                number: number_bad,
+            });
+        }
+        let cell = usize::try_from(input.y * 15 + input.x).map_err(|_| GameError::Corrupt)?;
         let after = input.move_number.saturating_sub(1);
 
         let moves =
             gomoku_core::board::decode_moves(&game.moves).map_err(|_| GameError::Corrupt)?;
         if let Some(black) = game.black_seat
-            && moves.get(after) == Some(&input.cell)
+            && moves.get(after) == Some(&cell)
             && seat_on_turn(after, black) == seat
         {
             return snapshot(&mut tx, game_id, player_id, now).await;
@@ -148,13 +169,13 @@ impl Database {
             return Err(GameError::GameNotStarted);
         }
         if seat_on_turn(game.move_count, black) != seat {
-            return Err(GameError::NotYourTurn);
+            return Err(GameError::NotYourTurn { auto: false });
         }
         if input.move_number != game.move_count + 1 {
             return Err(GameError::StaleMove);
         }
         let state = replay(black, &moves);
-        let applied = match apply_move(&state, input.cell) {
+        let applied = match apply_move(&state, cell) {
             Ok(applied) => applied,
             Err(MoveRejection::Occupied | MoveRejection::OutOfBoard) => {
                 return Err(GameError::CellOccupied);
@@ -168,7 +189,7 @@ impl Database {
         let mut clocks = game.clock_ms;
         clocks[seat.index()] = spent.clock_ms;
         let result: Option<GameResult> = applied.result;
-        let cell_byte = vec![u8::try_from(input.cell).map_err(|_| GameError::Corrupt)?];
+        let cell_byte = vec![u8::try_from(cell).map_err(|_| GameError::Corrupt)?];
         let updated = sqlx::query(
             "UPDATE games SET moves = moves || $2, move_count = move_count + 1, clock_ms_1 = $3, clock_ms_2 = $4, \
              turn_started_at = $5, status = CASE WHEN $6::text IS NULL THEN status ELSE 'finished' END, \

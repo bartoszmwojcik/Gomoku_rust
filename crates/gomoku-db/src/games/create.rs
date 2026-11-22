@@ -1,5 +1,8 @@
 //! Creating and cancelling a waiting game.
 
+use super::paper::insert_paper_state;
+use gomoku_core::paper::GameSettings;
+use gomoku_core::types::GameVariant;
 use sqlx::{PgConnection, Row};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -29,6 +32,7 @@ pub struct GuestCreateInput<'a> {
     pub cancel_own_waiting_game: bool,
     /// Anybody with the code may watch the game once it is in progress.
     pub is_public: bool,
+    pub settings: GameSettings,
 }
 
 /// Cancels a waiting game only while nobody has joined; zero rows means somebody joined first. The invitation is voided
@@ -83,13 +87,19 @@ async fn insert_waiting_game(
     expires_at: OffsetDateTime,
     now: OffsetDateTime,
     is_public: bool,
+    settings: GameSettings,
 ) -> Result<CreatedGame, sqlx::Error> {
-    let game_id: Uuid = sqlx::query("INSERT INTO games (origin, status, created_at, is_public) VALUES ('invite', 'waiting', $1, $2) RETURNING id")
+    let game_id: Uuid = sqlx::query("INSERT INTO games (origin, status, created_at, is_public, variant, time_control_ms, clock_ms_1, clock_ms_2) VALUES ('invite', 'waiting', $1, $2, $3, $4, $4, $4) RETURNING id")
         .bind(now)
         .bind(is_public)
+        .bind(settings.variant.as_str())
+        .bind(settings.time_control_ms as i32)
         .fetch_one(&mut *conn)
         .await?
         .try_get("id")?;
+    if settings.variant == GameVariant::Paper {
+        insert_paper_state(conn, game_id).await?;
+    }
     match creator {
         Creator::Account(user_id, display_name) => {
             sqlx::query(
@@ -143,6 +153,7 @@ impl Database {
         &self,
         user_id: Uuid,
         is_public: bool,
+        settings: GameSettings,
         now: OffsetDateTime,
         invitation_ttl_ms: i64,
         new_code: &mut (dyn FnMut() -> String + Send),
@@ -169,6 +180,7 @@ impl Database {
             expires_at,
             now,
             is_public,
+            settings,
         )
         .await;
         match created {
@@ -252,6 +264,7 @@ impl Database {
             expires_at,
             now,
             input.is_public,
+            input.settings,
         )
         .await?;
         tx.commit().await?;

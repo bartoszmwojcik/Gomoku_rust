@@ -184,7 +184,9 @@ pub async fn home(
     });
     let cancelled_notice = query.notice.as_deref() == Some("cancelled");
     render(&HomePage {
-        ctx: Ctx::new(tr, user, "/").with_banner(),
+        ctx: Ctx::new(tr, user, "/")
+            .with_banner()
+            .with_bag(&["home.settings."]),
         signed_in_as,
         current,
         cancelled_notice,

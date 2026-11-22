@@ -101,6 +101,31 @@ impl ParticipantKind {
     }
 }
 
+/// The kind of game: the classic 15x15 board or "paper and pencil".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GameVariant {
+    #[default]
+    Classic,
+    Paper,
+}
+
+impl GameVariant {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GameVariant::Classic => "classic",
+            GameVariant::Paper => "paper",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<GameVariant> {
+        match text {
+            "classic" => Some(GameVariant::Classic),
+            "paper" => Some(GameVariant::Paper),
+            _ => None,
+        }
+    }
+}
+
 /// Seat 1 is the creator, seat 2 the joining player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Seat {

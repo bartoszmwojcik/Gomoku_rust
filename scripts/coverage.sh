@@ -7,6 +7,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Tests start a PostgreSQL container per test binary and never stop it; remove only the ones THIS run created, or they
+# pile up and starve the next run (pool timeouts, dropped connections).
+managed="label=org.testcontainers.managed-by=testcontainers"
+before="$(docker ps -q --filter "$managed" 2>/dev/null | sort || true)"
+cleanup() {
+  after="$(docker ps -q --filter "$managed" 2>/dev/null | sort || true)"
+  created="$(comm -13 <(echo "$before") <(echo "$after"))"
+  [ -z "$created" ] || echo "$created" | xargs docker rm -f -v >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 mkdir -p target
 cargo llvm-cov clean --workspace >/dev/null
 cargo llvm-cov --workspace --ignore-filename-regex '(main\.rs|src/bin/)' --json --summary-only --output-path target/coverage.json

@@ -5,11 +5,12 @@
 //! database clock.
 
 use gomoku_core::constants::{SPECTATOR_ACCESS_MS, SPECTATOR_TOUCH_INTERVAL_MS, SPECTATORS_MAX};
-use gomoku_core::types::GameStatus;
+use gomoku_core::types::{GameStatus, GameVariant};
 use sqlx::Row;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use super::paper::{self, PaperSnapshot};
 use super::{
     GameError, GameRow, PLAYER_SELECT, PlayerRow, Snapshot, audience_of, count_present_spectators,
     read_game, settle_expired, snapshot,
@@ -41,6 +42,7 @@ pub struct SpectatorState {
     pub game: GameRow,
     pub players: Vec<PlayerRow>,
     pub audience: Option<i64>,
+    pub paper: Option<PaperSnapshot>,
     /// The spectator has a name (a nickname or an account), so may write.
     pub can_chat: bool,
 }
@@ -249,7 +251,13 @@ impl Database {
         if !game.is_public {
             return Err(GameError::AudienceClosed);
         }
-        if after > game.move_count {
+        let paper = if game.variant == GameVariant::Paper {
+            paper::load_paper(&mut tx, game_id).await?
+        } else {
+            None
+        };
+        let count = paper.as_ref().map_or(game.move_count, |p| p.move_count);
+        if after > count {
             return Err(GameError::BadAfter);
         }
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -269,6 +277,7 @@ impl Database {
             game,
             players,
             audience,
+            paper,
             can_chat,
         })
     }

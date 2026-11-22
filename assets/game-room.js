@@ -2,7 +2,7 @@
 // Constants are those of the reference implementation (see .ai/docs/2026-11-22-f3-game-contract.md, section 7).
 (() => {
   const { gt, gtp } = window.GT;
-  const { api, h, formatClock, stonesOf, createBoard, outcomeOf, playerLabel, formatDate, cellName, cellParts } = window.Gomoku;
+  const { api, h, formatClock, stonesOf, createBoard, outcomeOf, playerLabel, formatDate, cellName, cellParts, paperMark, createPaperBoard } = window.Gomoku;
 
   const POLL_MS = 3000;
   const PLAY_POLL_MS = 2000;
@@ -65,6 +65,25 @@
 
   const boardCtl = createBoard({ onCell: (x, y) => onCell(x, y) });
 
+  // ---- the paper variant ----------------------------------------------------------------------------------------------
+  const isPaper = () => game.variant === "paper";
+  const known = () => (isPaper() ? game.paper.moves.length : game.moves.length);
+  const lowMs = () => (isPaper() ? Math.min(60000, game.timeControlMs / 4) : 60000);
+  let pendingXY = null;
+  let paperSelected = null;
+  let recenters = 0;
+  const paperBoard = createPaperBoard({ phone: coarse, onSelect: (p, { move = false } = {}) => onPaperSelect(p, move) });
+  const colourOfSeat = (seat) => (seat === game.blackSeat ? "black" : "white");
+  const paperStones = () => game.paper.moves.map((m) => ({ x: m.x, y: m.y, seat: m.seat, auto: m.auto }));
+  const autoSeat = () => game.paper?.autoSeat ?? null;
+  const paperMyTurn = () => game.status === "active" && game.turnSeat === me() && autoSeat() !== game.turnSeat;
+  const refusalOf = (x, y) => {
+    const stones = paperStones();
+    if (stones.some((s) => s.x === x && s.y === y)) return "CELL_OCCUPIED";
+    if (stones.length === 0) return x === 50 && y === 50 ? null : "FIRST_MOVE_CENTER";
+    return stones.some((s) => Math.abs(s.x - x) <= 3 && Math.abs(s.y - y) <= 3) ? null : "TOO_FAR";
+  };
+
   // Figures are built once, so the browser loads each QR image once and not on every render.
   const qrFigure = (alt, caption) => h("figure", { class: "qr-figure" },
     h("img", { src: `/api/games/${gameId}/qr`, alt, class: "qr" }), h("figcaption", null, caption));
@@ -101,8 +120,12 @@
 
   // ---- state merging and application --------------------------------------------------------------------------------
   const merge = (current, next, after) => {
-    if (next.moveCount < current.moves.length) return current; // an older answer
+    const count = current.variant === "paper" ? current.paper.moves.length : current.moves.length;
+    if (next.moveCount < count) return current; // an older answer
     if (current.status === "finished" && next.status !== "finished") return current;
+    if (next.variant === "paper") {
+      return { ...next, paper: { ...next.paper, moves: current.paper.moves.slice(0, after).concat(next.paper.moves) } };
+    }
     return { ...next, moves: current.moves.slice(0, after).concat(next.moves) };
   };
 
@@ -141,7 +164,7 @@
     reading = true;
     const seq = version;
     const startedAt = performance.now();
-    const after = game.moves.length;
+    const after = known();
     readAbort = new AbortController();
     const abortTimer = window.setTimeout(() => readAbort.abort(), POLL_TIMEOUT_MS);
     const result = await api(`/api/games/${gameId}?after=${after}`, { method: "GET", signal: readAbort.signal });
@@ -150,7 +173,7 @@
     if (accepting) { readAgain = false; return; }
     if (result.ok) {
       fails = 0;
-      if (seq === version || result.data.moveCount >= game.moves.length) apply(result.data, after, { fromRead: true, startedAt });
+      if (seq === version || result.data.moveCount >= known()) apply(result.data, after, { fromRead: true, startedAt });
       else render();
     } else if (result.error.code === "NOT_FOUND") {
       gone = true;
@@ -205,7 +228,8 @@
   const sendMove = async (x, y, moveNumber) => {
     if (moveBusy) return;
     moveBusy = true;
-    pendingCell = y * 15 + x;
+    pendingCell = isPaper() ? y * 101 + x : y * 15 + x;
+    pendingXY = { x, y };
     lastMoveAttempt = { x, y, moveNumber };
     refusal = null;
     moveFailed = null;
@@ -213,6 +237,7 @@
     const result = await api(`/api/games/${gameId}/moves`, { body: { x, y, moveNumber } });
     moveBusy = false;
     pendingCell = null;
+    pendingXY = null;
     if (result.ok) {
       lastMoveAttempt = null;
       apply(result.data, moveNumber - 1);
@@ -220,7 +245,7 @@
     }
     const code = result.error.code;
     if (code === "NOT_FOUND") { gone = true; render(); return; }
-    if (["STALE_MOVE", "NOT_YOUR_TURN", "CELL_OCCUPIED", "GAME_FINISHED", "GAME_NOT_ACTIVE"].includes(code)) {
+    if (["STALE_MOVE", "NOT_YOUR_TURN", "CELL_OCCUPIED", "GAME_FINISHED", "GAME_NOT_ACTIVE", "MOVE_TOO_FAR", "FIRST_MOVE_CENTER"].includes(code)) {
       refusal = code === "GAME_NOT_ACTIVE" ? "GAME_FINISHED" : code;
       lastMoveAttempt = null;
       render();
@@ -229,6 +254,14 @@
     }
     moveFailed = { network: code === "network" };
     render();
+  };
+
+  const onPaperSelect = (p, move) => {
+    if (!paperMyTurn() || moveBusy || !allSeen()) return;
+    if (move) { paperSelected = p; render(true); return; }
+    if (refusalOf(p.x, p.y)) return;
+    if (coarse) { paperSelected = p; render(true); return; }
+    sendMove(p.x, p.y, game.moveCount + 1);
   };
 
   const onCell = (x, y) => {
@@ -358,48 +391,91 @@
   const boardHost = h("div", { class: "board-host" });
   const rematchHost = h("div", { class: "rematch-host" });
 
+  /** A player's name in the paper variant: the mark, the label, the points and a note when the automat plays for them. */
+  const paperName = (player) => h("span", null,
+    paperMark(colourOfSeat(player.seat), { framed: true }), playerLabel(player, me()),
+    h("span", { "data-testid": player.seat === me() ? "score-mine" : "score-theirs" }, gt("game.shared.score", { score: game.paper.scores[player.seat - 1] })),
+    autoSeat() === player.seat ? gt("game.shared.automat") : "");
+
   const screenBoard = () => {
     const finished = game.status === "finished";
     const my = game.players.find((p) => p.seat === me());
     const opp = other();
     const side = mySide();
-    const stones = stonesOf(game.moves);
-    const last = game.moves.length ? game.moves[game.moves.length - 1] : null;
-    const display = new Map(stones);
-    if (pendingCell !== null && !display.has(pendingCell)) display.set(pendingCell, side);
-    const readOnly = finished || !myTurn() || moveBusy;
-    boardCtl.update({ stones: display, last, winLine: game.result?.winLine ?? [], readOnly, selected, selectedColor: side });
-    boardHost.replaceChildren(boardCtl.el);
+    const paper = isPaper();
+    const myT = paper ? paperMyTurn() : myTurn();
+    if (paper) {
+      const stones = paperStones();
+      const lastStone = stones.length ? stones[stones.length - 1] : null;
+      const mine = stones.filter((st) => st.seat === me()).length;
+      const opponentLast = [...stones].reverse().find((st) => st.seat !== me()) ?? null;
+      if (paperSelected === null && myT && stones.length === 0) paperSelected = { x: 50, y: 50 };
+      if (!myT || (paperSelected && stones.some((st) => st.x === paperSelected.x && st.y === paperSelected.y))) paperSelected = myT ? paperSelected : null;
+      paperBoard.update({
+        stones, fives: game.paper.fives, last: lastStone, opponent: opponentLast, pendingStone: pendingXY ? { ...pendingXY, seat: me(), auto: false } : null,
+        disabled: finished || !myT || moveBusy, allowed: (x, y) => refusalOf(x, y) === null,
+        colors: { 1: colourOfSeat(1), 2: colourOfSeat(2) }, selected: coarse ? paperSelected : null,
+        token: `${mine}:${recenters}`,
+      });
+      boardHost.replaceChildren(paperBoard.el);
+    } else {
+      const stones = stonesOf(game.moves);
+      const last = game.moves.length ? game.moves[game.moves.length - 1] : null;
+      const display = new Map(stones);
+      if (pendingCell !== null && !display.has(pendingCell)) display.set(pendingCell, side);
+      const readOnly = finished || !myTurn() || moveBusy;
+      boardCtl.update({ stones: display, last, winLine: game.result?.winLine ?? [], readOnly, selected, selectedColor: side });
+      boardHost.replaceChildren(boardCtl.el);
+    }
+    const sideSet = paper ? "paper" : "classic";
 
     let banner;
     if (finished && game.result) {
-      const outcome = outcomeOf(game.result, me());
+      const outcome = outcomeOf(game.result, me(), paper);
       banner = h("section", { class: `result ${outcome.kind}`, role: "status", "data-testid": "result" }, h("strong", null, outcome.title), outcome.detail ? [" ", outcome.detail] : null);
     } else {
       banner = h("p", { class: "turn", role: "status", "data-testid": "turn-status" },
-        moveBusy ? gt("game.field.sending") : myTurn() ? gt("game.field.yourTurn", { side: gt(`game.sides.classic.name.${side}`) }) : gt("game.field.opponentTurn"));
+        moveBusy ? gt("game.field.sending")
+          : myT ? gt("game.field.yourTurn", { side: gt(`game.sides.${sideSet}.name.${side}`) })
+          : paper && autoSeat() === me() && game.turnSeat !== me() ? gt("game.field.automatForYou")
+          : paper && autoSeat() === game.turnSeat ? gt("game.field.automatMoves")
+          : gt("game.field.opponentTurn"));
     }
     const polling = !finished && fails >= 1
       ? (fails >= POLL_FAIL_LIMIT
         ? alertBox("danger", gt("game.shared.pollFailed"), " ", h("button", { type: "button", onclick: () => readOnce() }, gt("game.shared.checkNow")))
         : h("p", { role: "status" }, gt("game.shared.pollRetry", { attempt: fails + 1, max: POLL_FAIL_LIMIT })))
       : null;
-    const selectedText = selected === null
-      ? (myTurn() ? gt("game.field.classicHint") : gt("game.field.waitOpponent"))
-      : gt("game.field.classicSelected", { cell: cellName(selected), place: gt(`game.sides.classic.place.${side}`) });
+    const paperRefusal = paper && paperSelected ? refusalOf(paperSelected.x, paperSelected.y) : null;
+    const selectedText = paper
+      ? (paperSelected === null
+        ? (myT ? gt("game.field.paperHint") : gt(autoSeat() !== null ? "game.field.waitAutomat" : "game.field.waitOpponent"))
+        : paperRefusal ? gt(`game.paper.refusal.${paperRefusal}`)
+        : gt("game.field.paperSelected", { x: paperSelected.x - 50, y: paperSelected.y - 50, place: gt(`game.sides.paper.place.${side}`) }))
+      : (selected === null
+        ? (myTurn() ? gt("game.field.classicHint") : gt("game.field.waitOpponent"))
+        : gt("game.field.classicSelected", { cell: cellName(selected), place: gt(`game.sides.classic.place.${side}`) }));
+    const placeDisabled = paper
+      ? paperSelected === null || moveBusy || !myT || Boolean(paperRefusal)
+      : selected === null || moveBusy || !myTurn();
+    const place = () => {
+      if (paper) { if (paperSelected) sendMove(paperSelected.x, paperSelected.y, game.moveCount + 1); }
+      else if (selected !== null) sendMove(selected % 15, Math.floor(selected / 15), game.moveCount + 1);
+    };
     const touch = coarse && !finished
       ? h("div", { class: "touch" },
-        h("button", { type: "button", "data-testid": "place", disabled: selected === null || moveBusy || !myTurn(), onclick: () => { if (selected !== null) sendMove(selected % 15, Math.floor(selected / 15), game.moveCount + 1); } }, gt(`game.sides.classic.place.${side}`)),
+        h("button", { type: "button", "data-testid": "place", disabled: placeDisabled, onclick: place }, gt(`game.sides.${sideSet}.place.${side}`)),
+        paper ? h("button", { type: "button", "data-testid": "paper-recenter", onclick: () => { recenters += 1; render(true); } }, gt("game.field.recenter")) : null,
         h("p", { role: "status", "data-testid": "selection" }, selectedText))
       : null;
     const refusalBox = refusal ? alertBox("warning", gt(`game.field.refusals.${refusal}`)) : null;
     const failedBox = moveFailed ? alertBox("danger", gt(moveFailed.network ? "game.shared.network" : "game.field.moveFailed"), " ",
       h("button", { type: "button", "data-testid": "retry-move", onclick: () => lastMoveAttempt && sendMove(lastMoveAttempt.x, lastMoveAttempt.y, lastMoveAttempt.moveNumber) }, gt("game.shared.retry"))) : null;
-    const plays = gt(`game.sides.classic.plays.${side}`);
+    const plays = gt(`game.sides.${sideSet}.plays.${side}`);
     const drawn = game.moveCount === 0 && !finished
-      ? alertBox("info", game.fromRematch ? gt("game.field.drawnRematch", { swapped: gt("game.sides.classic.rematchSwapped"), plays }) : gt("game.field.drawn", { plays }))
+      ? alertBox("info", game.fromRematch ? gt("game.field.drawnRematch", { swapped: gt(`game.sides.${sideSet}.rematchSwapped`), plays }) : gt("game.field.drawn", { plays }))
       : null;
-    const opponentMove = myTurn() && game.moves.length
+    const opponentMove = !paper && myTurn() && game.moves.length
       ? h("p", { class: "sr-only", role: "status", "data-testid": "opponent-move" }, gt("game.board.opponentMove", cellParts(last)))
       : null;
     const resign = !finished ? h("button", { type: "button", class: "danger", "data-testid": "resign", onclick: openResign }, gt("game.field.resign")) : null;
@@ -416,9 +492,9 @@
       returnNotice ? alertBox("info", returnNotice.text) : null,
       polling, banner,
       finished && wasFinishedOnLoad ? h("p", { role: "status", "data-testid": "reload-note" }, gt("game.field.reloaded")) : null,
-      h("p", { class: "sr-only", role: "status", "data-testid": "low-live" }, lowAnnounced ? gt("game.field.lowTime") : ""),
-      clockEl(opp.seat, playerLabel(opp, me())), boardHost, opponentMove, touch, refusalBox, failedBox, ...guestNotes, drawn,
-      clockEl(me(), playerLabel(my, me())),
+      h("p", { class: "sr-only", role: "status", "data-testid": "low-live" }, lowAnnounced ? gt(paper ? "game.field.paperLowTime" : "game.field.lowTime") : ""),
+      clockEl(opp.seat, paper ? paperName(opp) : playerLabel(opp, me())), boardHost, opponentMove, touch, refusalBox, failedBox, ...guestNotes, drawn,
+      clockEl(me(), paper ? paperName(my) : playerLabel(my, me())),
       h("p", { "data-testid": "my-color" }, gt(finished ? "game.field.youPlayed" : "game.field.youPlay", { plays })),
       resign, rematchHost,
       game.audience ? qrPublic : null,
@@ -567,7 +643,7 @@
     accepting = true;
     window.clearTimeout(timer);
     if (isGuest) {
-      const result = await api(`/api/games/${gameId}?after=${game.moves.length}`, { method: "GET" });
+      const result = await api(`/api/games/${gameId}?after=${known()}`, { method: "GET" });
       if (!result.ok) {
         accepting = false;
         rematchMsg = { kind: "danger", text: gt("game.rematch.claimFailed"), retry: () => { rematchMsg = null; maybeFollowRematch(); } };
@@ -590,12 +666,12 @@
       const base = game.clock.remainingMs[seat - 1];
       const left = seat === running ? Math.max(0, base - elapsed) : base;
       el.querySelector(".clock-time").textContent = formatClock(left);
-      el.dataset.low = left < LOW_MS ? "true" : "false";
+      el.dataset.low = left < lowMs() ? "true" : "false";
       el.classList.toggle("running", seat === running);
-      if (seat === me() && left < LOW_MS && !lowAnnounced && game.status === "active" && allSeen()) {
+      if (seat === me() && left < lowMs() && !lowAnnounced && game.status === "active" && allSeen()) {
         lowAnnounced = true;
         const live = document.querySelector('[data-testid="low-live"]');
-        if (live) live.textContent = gt("game.field.lowTime");
+        if (live) live.textContent = gt(isPaper() ? "game.field.paperLowTime" : "game.field.lowTime");
       }
       if (seat === running && left <= 0) expiredNow = true;
     });
@@ -620,12 +696,12 @@
     return "board";
   };
 
-  const render = () => {
+  const render = (force = false) => {
     const screen = screenOf();
     const focusCell = document.activeElement?.dataset?.cell ?? null;
     const stable = { ...game, clock: { remainingMs: game.clock.remainingMs, running: game.clock.running } };
-    const signature = JSON.stringify([screen, stable, fails, moveBusy, pendingCell, selected, refusal, moveFailed, returnNotice?.text, ownWaitingNotice, cancelNote, tokenNoticeDismissed, rematchBusy, rematchMsg?.text, rematchHidden, rematchWithdrawn]);
-    if (signature === lastSignature) return;
+    const signature = JSON.stringify([screen, stable, fails, moveBusy, pendingCell, selected, refusal, moveFailed, returnNotice?.text, ownWaitingNotice, cancelNote, tokenNoticeDismissed, rematchBusy, rematchMsg?.text, rematchHidden, rematchWithdrawn, paperSelected, recenters, pendingXY]);
+    if (signature === lastSignature && !force) return;
     lastSignature = signature;
     const builders = { gone: screenGone, cancelled: screenCancelled, waiting: screenWaiting, joined: screenJoined, opening: screenOpening, board: screenBoard };
     root.dataset.screen = screen;

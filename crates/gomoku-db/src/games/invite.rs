@@ -3,7 +3,8 @@
 //! Every "no" is the same `InvalidInvitation` (malformed, unknown, used, expired, cancelled, a lost race): the answer is no
 //! oracle for which codes exist.
 
-use gomoku_core::types::{GameStatus, Seat};
+use gomoku_core::paper::GameSettings;
+use gomoku_core::types::{GameStatus, GameVariant, Seat};
 use sqlx::{PgConnection, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -61,6 +62,7 @@ pub struct PreviewView {
     pub creator_name: Option<String>,
     pub creator_is_guest: bool,
     pub is_public: bool,
+    pub settings: GameSettings,
 }
 
 /// How the second player joins.
@@ -100,6 +102,7 @@ struct Found {
     creator_name: Option<String>,
     creator_is_guest: bool,
     is_public: bool,
+    settings: GameSettings,
 }
 
 async fn find_invitation(
@@ -108,7 +111,7 @@ async fn find_invitation(
     now: OffsetDateTime,
 ) -> Result<Option<Found>, GameError> {
     let row = sqlx::query(
-        "SELECT i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, g.is_public, \
+        "SELECT i.game_id, i.consumed_at IS NOT NULL AS consumed, i.expires_at <= $2 AS expired, g.status, g.is_public, g.variant, g.time_control_ms, \
                 c.user_id AS creator_user_id, COALESCE(c.display_name, u.display_name) AS creator_account_name, \
                 c.kind AS creator_kind, c.nickname AS creator_nickname \
          FROM invitations i JOIN games g ON g.id = i.game_id \
@@ -137,6 +140,11 @@ async fn find_invitation(
         },
         creator_is_guest: is_guest,
         is_public: row.try_get("is_public")?,
+        settings: GameSettings {
+            variant: GameVariant::parse(&row.try_get::<String, _>("variant")?)
+                .ok_or(GameError::Corrupt)?,
+            time_control_ms: i64::from(row.try_get::<i32, _>("time_control_ms")?),
+        },
     }))
 }
 
@@ -252,6 +260,7 @@ impl Database {
             creator_name: found.creator_name.clone(),
             creator_is_guest: found.creator_is_guest,
             is_public: found.is_public,
+            settings: found.settings,
         };
 
         if let Some(seat) = member_of(&mut conn, viewer, found.game_id, now).await? {
