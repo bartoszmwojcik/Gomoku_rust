@@ -83,6 +83,9 @@ impl Database {
         if players.iter().any(|p| p.kind == "bot") {
             return Err(GameError::RematchWithBot);
         }
+        if players.iter().any(|p| p.kind == "agent") {
+            return Err(GameError::RematchWithAgent);
+        }
         if players.iter().any(account_is_gone) {
             return Err(GameError::RematchUnavailable);
         }
@@ -232,6 +235,7 @@ impl Database {
         let unavailable = players.iter().any(|p| {
             account_is_gone(p)
                 || p.kind == "bot"
+                || p.kind == "agent"
                 || (p.kind == "guest" && (p.token_hash.is_none() || !token_fresh))
         });
         if unavailable {

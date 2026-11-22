@@ -191,6 +191,9 @@ pub fn game_view(
                 player["displayName"] = bot["name"].clone();
                 player["bot"] = bot["bot"].clone();
             }
+            if p.kind == "agent" {
+                player["agentName"] = json!(p.agent_name);
+            }
             player
         })
         .collect();
@@ -221,14 +224,15 @@ pub fn game_view(
         .as_ref()
         .filter(|_| game.status == GameStatus::Waiting)
     {
-        object.insert(
-            "invitation".into(),
-            json!({
-                "code": format_invitation_code(&invitation.code),
-                "url": invitation_url(origin, &invitation.code),
-                "expiresAt": iso_ms(invitation.expires_at),
-            }),
-        );
+        let mut shown = json!({
+            "code": format_invitation_code(&invitation.code),
+            "url": invitation_url(origin, &invitation.code),
+            "expiresAt": iso_ms(invitation.expires_at),
+        });
+        if let Some(url) = gomoku_core::agent::agent_mcp_url(origin) {
+            shown["mcpUrl"] = json!(url);
+        }
+        object.insert("invitation".into(), shown);
     }
     if game.status == GameStatus::Cancelled
         && let Some(reason) = closed_reason(
@@ -275,11 +279,15 @@ pub fn spectator_view(
         .players
         .iter()
         .map(|p| {
-            json!({
+            let mut player = json!({
                 "seat": p.seat.number(),
                 "kind": p.kind,
                 "displayName": display_name_of(p.is_guest(), p.seat, p.nickname.as_deref(), p.display_name.as_deref(), p.current_name.as_deref()),
-            })
+            });
+            if p.kind == "agent" {
+                player["agentName"] = json!(p.agent_name);
+            }
+            player
         })
         .collect();
     let mut view = json!({

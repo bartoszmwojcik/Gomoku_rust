@@ -76,6 +76,11 @@ pub enum JoinAs<'a> {
         new_hash: &'a str,
         nickname: Option<&'a str>,
     },
+    /// An MCP agent: no account, no cookie; the hash of its token and the declared model name.
+    Agent {
+        token_hash: &'a str,
+        name: Option<&'a str>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +96,8 @@ pub struct AcceptOutcome {
     pub game_id: Uuid,
     /// A guest really joined: the fresh token must be set as the cookie. `false` for a returning participant.
     pub new_guest_seat: bool,
+    /// The creator (seat 1) is a guest, not an account.
+    pub creator_is_guest: bool,
 }
 
 struct Found {
@@ -324,7 +331,8 @@ impl Database {
             } => Viewer::Guest(hash),
             JoinAs::Guest {
                 cookie_hash: None, ..
-            } => Viewer::Anonymous,
+            }
+            | JoinAs::Agent { .. } => Viewer::Anonymous,
         };
         settle_viewer(self, viewer, now).await?;
         let mut tx = self.pool().begin().await?;
@@ -388,6 +396,7 @@ impl Database {
                 return Ok(AcceptOutcome {
                     game_id: found.game_id,
                     new_guest_seat: false,
+                    creator_is_guest: found.creator_is_guest,
                 });
             }
             return Err(GameError::InvalidInvitation);
@@ -426,6 +435,18 @@ impl Database {
             .ok_or(GameError::InvalidInvitation)?
             .try_get("id")?;
         let seated = match input.join_as {
+            JoinAs::Agent { token_hash, name } => {
+                sqlx::query(
+                    "INSERT INTO game_players (game_id, seat, kind, agent_token_hash, agent_name, is_active, joined_at, seen_at) \
+                     VALUES ($1, 2, 'agent', $2, $3, true, $4, $4) RETURNING id",
+                )
+                .bind(found.game_id)
+                .bind(token_hash)
+                .bind(name)
+                .bind(now)
+                .fetch_one(&mut *tx)
+                .await
+            }
             JoinAs::Account(user) => {
                 sqlx::query(
                     "INSERT INTO game_players (game_id, seat, kind, user_id, is_active, joined_at, seen_at, display_name) \
@@ -486,6 +507,7 @@ impl Database {
         Ok(AcceptOutcome {
             game_id: found.game_id,
             new_guest_seat: is_guest,
+            creator_is_guest: found.creator_is_guest,
         })
     }
 }

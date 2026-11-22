@@ -79,7 +79,7 @@ macro_rules! game_deadline_sql {
     };
 }
 
-pub const RULES: [Rule; 15] = [
+pub const RULES: [Rule; 16] = [
     Rule {
         // 1 h margin: a session that expired mid-game stays until the game ends (games last well under an hour).
         key: "sessions",
@@ -194,7 +194,7 @@ pub const RULES: [Rule; 15] = [
         table: "games",
         primary_key: "id",
         condition: concat!(
-            "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'bot')) \
+            "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'agent', 'bot')) \
                     AND ",
             game_deadline_sql!("games"),
             " < $1"
@@ -209,7 +209,7 @@ pub const RULES: [Rule; 15] = [
         key: "guestOnlyFinishedGames",
         table: "games",
         primary_key: "id",
-        condition: "status = 'finished' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'bot')) \
+        condition: "status = 'finished' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'agent', 'bot')) \
                     AND finished_at < $1",
         grace_ms: HOUR_MS,
         protects_email: false,
@@ -235,6 +235,16 @@ pub const RULES: [Rule; 15] = [
         grace_ms: HOUR_MS,
         protects_email: false,
         clear_column: Some("guest_token_hash"),
+    },
+    Rule {
+        // An agent's token dies 1 h after the game finished, like a guest's: the hash is cleared.
+        key: "agentTokens",
+        table: "game_players",
+        primary_key: "id",
+        condition: "agent_token_hash IS NOT NULL AND game_id IN (SELECT id FROM games WHERE finished_at < $1)",
+        grace_ms: HOUR_MS,
+        protects_email: false,
+        clear_column: Some("agent_token_hash"),
     },
     Rule {
         // Unconfirmed accounts older than 14 days. Last on purpose: by then the sweep of the same run is done. The
@@ -276,6 +286,7 @@ pub struct CleanupResult {
     pub guest_only_finished_games: u64,
     pub orphaned_finished_games: u64,
     pub guest_tokens: u64,
+    pub agent_tokens: u64,
     pub unverified_users: u64,
     pub errors: Vec<RuleError>,
     pub truncated: bool,
@@ -298,6 +309,7 @@ impl CleanupResult {
             "guestOnlyFinishedGames" => &mut self.guest_only_finished_games,
             "orphanedFinishedGames" => &mut self.orphaned_finished_games,
             "guestTokens" => &mut self.guest_tokens,
+            "agentTokens" => &mut self.agent_tokens,
             "unverifiedUsers" => &mut self.unverified_users,
             _ => return None,
         })

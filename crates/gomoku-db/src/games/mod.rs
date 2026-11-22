@@ -4,6 +4,7 @@
 //! There is no background worker: every time-based transition (an invitation expiring, a game nobody opened, a loss on
 //! time) is performed lazily by whoever touches the game next, inside the statements below.
 
+mod agent;
 mod bot;
 mod chat;
 mod create;
@@ -24,6 +25,7 @@ use sqlx::{PgConnection, Row};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+pub use agent::{AgentPeek, AgentSeat};
 pub use bot::{BotTurn, BotTurnRead};
 pub use chat::{ChatMessageRow, ChatRead, ChatSent};
 pub use create::{BotSeat, CreateOutcome, CreatedGame, GuestCreateInput};
@@ -100,6 +102,8 @@ pub enum GameError {
     RematchUnavailable,
     #[error("there is no rematch against the bot")]
     RematchWithBot,
+    #[error("there is no rematch against an agent")]
+    RematchWithAgent,
     #[error("the seeker was taken")]
     LobbySeekerTaken,
     #[error("the seeker's status expired")]
@@ -256,10 +260,12 @@ pub struct PlayerRow {
     pub bot_level: Option<i16>,
     pub bot_memory_mb: Option<i16>,
     pub bot_depth_cap: Option<i16>,
+    /// An agent's declared model name (unverified; `None` for people and for an agent that declared none).
+    pub agent_name: Option<String>,
 }
 
 pub(crate) const PLAYER_SELECT: &str = "SELECT p.id, p.seat, p.kind, p.user_id, p.guest_token_hash, p.nickname, p.display_name, \
-     u.display_name AS current_name, p.seen_at IS NOT NULL AS seen, p.is_active, p.bot_level, p.bot_memory_mb, p.bot_depth_cap \
+     u.display_name AS current_name, p.seen_at IS NOT NULL AS seen, p.is_active, p.bot_level, p.bot_memory_mb, p.bot_depth_cap, p.agent_name \
      FROM game_players p LEFT JOIN users u ON u.id = p.user_id";
 
 impl PlayerRow {
@@ -279,6 +285,7 @@ impl PlayerRow {
             bot_level: row.try_get("bot_level")?,
             bot_memory_mb: row.try_get("bot_memory_mb")?,
             bot_depth_cap: row.try_get("bot_depth_cap")?,
+            agent_name: row.try_get("agent_name")?,
         })
     }
 

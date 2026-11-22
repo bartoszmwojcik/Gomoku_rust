@@ -117,6 +117,11 @@ impl From<GameError> for ApiError {
                 "Z botem nie ma rewanżu. Zagraj ponownie z botem w nowej partii.",
             )
             .with_data(json!({ "reason": "bot" })),
+            GameError::RematchWithAgent => conflict(
+                "REMATCH_UNAVAILABLE",
+                "Z agentem nie ma rewanżu. Utwórz nową partię i przekaż mu nowy kod.",
+            )
+            .with_data(json!({ "reason": "agent" })),
             GameError::LobbySeekerTaken => conflict(
                 "LOBBY_SEEKER_TAKEN",
                 "Ten gracz zagrał już z kimś innym. Wybierz kogoś innego z listy.",

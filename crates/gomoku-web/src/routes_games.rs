@@ -98,11 +98,15 @@ pub async fn resolve_participant(
 }
 
 fn invitation_json(created: &CreatedGame, origin: &str) -> Value {
-    json!({
+    let mut invitation = json!({
         "code": format_invitation_code(&created.code),
         "url": invitation_url(origin, &created.code),
         "expiresAt": iso_ms(created.expires_at),
-    })
+    });
+    if let Some(url) = gomoku_core::agent::agent_mcp_url(origin) {
+        invitation["mcpUrl"] = json!(url);
+    }
+    invitation
 }
 
 pub(crate) fn nickname_issue(error: NicknameError) -> FieldIssue {

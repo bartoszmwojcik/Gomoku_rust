@@ -68,7 +68,7 @@ impl Database {
         let sql = format!(
             "SELECT g.id, to_char(g.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS finished_at, \
                     g.end_reason, g.winner_seat, me.seat AS my_seat, op.kind AS opponent_kind, op.seat AS opponent_seat, \
-                    op.nickname AS opponent_nickname, op.bot_level AS opponent_bot_level, op.bot_memory_mb AS opponent_bot_memory_mb, COALESCE(op.display_name, u.display_name) AS opponent_name, g.variant, ps.score_1, ps.score_2 \
+                    op.nickname AS opponent_nickname, op.bot_level AS opponent_bot_level, op.bot_memory_mb AS opponent_bot_memory_mb, COALESCE(op.display_name, op.agent_name, u.display_name) AS opponent_name, g.variant, ps.score_1, ps.score_2 \
              FROM game_players me JOIN games g ON g.id = me.game_id AND g.status = 'finished' \
              JOIN game_players op ON op.game_id = g.id AND op.seat <> me.seat LEFT JOIN users u ON u.id = op.user_id \
              LEFT JOIN paper_game_states ps ON ps.game_id = g.id \

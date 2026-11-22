@@ -69,6 +69,7 @@
   // ---- the paper variant ----------------------------------------------------------------------------------------------
   const isPaper = () => game.variant === "paper";
   const botOf = () => game.players.find((p) => p.kind === "bot") ?? null;
+  const agentOf = () => game.players.find((p) => p.kind === "agent") ?? null;
   const botThinking = () => game.status === "active" && game.turnSeat !== null && botOf()?.seat === game.turnSeat;
   const known = () => (isPaper() ? game.paper.moves.length : game.moves.length);
   const lowMs = () => (isPaper() ? Math.min(60000, game.timeControlMs / 4) : 60000);
@@ -192,7 +193,7 @@
     if (gone || hidden || accepting) return false;
     if (game.status === "waiting" || game.status === "active") return true;
     if (game.status === "finished") {
-      if (game.rematch?.state === "accepted" || botOf()) return false;
+      if (game.rematch?.state === "accepted" || botOf() || agentOf()) return false;
       if (isGuest && game.finishedAt && serverNow() >= Date.parse(game.finishedAt) + GUEST_RESULT_WINDOW_MS) return false;
       return true;
     }
@@ -371,6 +372,7 @@
         h("p", null, gt("game.room.validUntil", { date: formatDate(inv.expiresAt) })),
         qrInvite,
         h("p", null, copy, " ", share, " ", cancel), copyStatus) : null,
+      inv?.mcpUrl ? window.Gomoku.agentConnectCard(h, { mcpUrl: inv.mcpUrl, code: inv.code, setStatus: (text) => { copyStatus.textContent = text; } }) : null,
       isGuest ? alertBox("warning", gt("game.room.keepBrowser")) : null,
       h("section", { "data-testid": "chat-panel" }, h("h2", null, gt("chat.title")), h("p", null, gt("chat.waiting"))),
       h("p", null, homeLink()),
@@ -625,6 +627,12 @@
   const renderRematch = () => {
     if (game.status !== "finished") { rematchHost.replaceChildren(); return; }
     if (botOf()) { renderBotReplay(); return; }
+    if (agentOf()) {
+      rematchHost.replaceChildren(h("section", { "aria-labelledby": "rematch-h" }, h("h2", { id: "rematch-h" }, gt("game.rematch.heading")),
+        h("p", { "data-testid": "rematch-agent-hint" }, gt("game.rematch.agentHint")),
+        h("a", { href: "/", "data-testid": "rematch-leave", onclick: leave }, gt("game.shared.backToPanel"))));
+      return;
+    }
     const mode = rematchMode();
     const opp = other();
     const gone2 = game.players.some((p) => p.kind === "account" && p.displayName === null);

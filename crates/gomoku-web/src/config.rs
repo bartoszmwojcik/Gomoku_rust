@@ -100,6 +100,65 @@ impl Default for ChatConfig {
     }
 }
 
+/// MCP agents (`MCP_*`, `CHAT_AGENT_*`): the abuse limits of the endpoint and the chat limits of an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpConfig {
+    /// Requests per client address per minute, whatever the method.
+    pub request_limit: u32,
+    /// Successful joins per address per hour.
+    pub join_limit: u32,
+    /// Wrong invitation codes per address (or in total, when the address is unknown) per 15 minutes.
+    pub lookup_limit: u32,
+    pub lookup_global_limit: u32,
+    /// `get_state` and `play_move` calls per token per minute.
+    pub token_limit: u32,
+    /// `send_message` calls per token per minute.
+    pub chat_limit: u32,
+    pub chat_max_length: usize,
+    pub chat_min_interval_ms: u64,
+    /// Pause between the reads of a waiting `get_state` (a tuning knob; tests shorten it).
+    pub poll_interval_ms: u64,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            request_limit: 300,
+            join_limit: 10,
+            lookup_limit: 20,
+            lookup_global_limit: 300,
+            token_limit: 60,
+            chat_limit: 30,
+            chat_max_length: gomoku_core::constants::CHAT_AGENT_MAX_LENGTH,
+            chat_min_interval_ms: gomoku_core::constants::CHAT_AGENT_MIN_INTERVAL_MS,
+            poll_interval_ms: gomoku_core::agent::MCP_POLL_INTERVAL_MS,
+        }
+    }
+}
+
+impl McpConfig {
+    fn from_lookup(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let defaults = Self::default();
+        let limit = |name: &'static str, default: u32| -> Result<u32, ConfigError> {
+            Ok(positive(lookup, name)?.unwrap_or(default))
+        };
+        Ok(Self {
+            request_limit: limit("MCP_REQUEST_LIMIT", defaults.request_limit)?,
+            join_limit: limit("MCP_JOIN_LIMIT", defaults.join_limit)?,
+            lookup_limit: limit("MCP_LOOKUP_LIMIT", defaults.lookup_limit)?,
+            lookup_global_limit: limit("MCP_LOOKUP_GLOBAL_LIMIT", defaults.lookup_global_limit)?,
+            token_limit: limit("MCP_TOKEN_LIMIT", defaults.token_limit)?,
+            chat_limit: limit("MCP_CHAT_LIMIT", defaults.chat_limit)?,
+            chat_max_length: ranged(lookup, "CHAT_AGENT_MAX_LENGTH", 1, 1000)?
+                .map_or(defaults.chat_max_length, |n| n as usize),
+            chat_min_interval_ms: ranged(lookup, "CHAT_AGENT_MIN_INTERVAL_MS", 0, 3_600_000)?
+                .unwrap_or(defaults.chat_min_interval_ms),
+            poll_interval_ms: ranged(lookup, "MCP_POLL_INTERVAL_MS", 10, 60_000)?
+                .unwrap_or(defaults.poll_interval_ms),
+        })
+    }
+}
+
 /// The hosted bot (`BOT_*`): admission, capacity and the per-move time limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BotConfig {
@@ -201,6 +260,7 @@ pub struct AppConfig {
     pub admin_email: Option<String>,
     pub chat: ChatConfig,
     pub bot: BotConfig,
+    pub mcp: McpConfig,
 }
 
 /// An integer setting in `min..=max` written as plain digits; unset or empty means the default.
@@ -341,6 +401,7 @@ impl AppConfig {
                 .filter(|email| !email.is_empty()),
             chat,
             bot: BotConfig::from_lookup(&lookup)?,
+            mcp: McpConfig::from_lookup(&lookup)?,
         })
     }
 }
@@ -445,6 +506,60 @@ mod tests {
         assert!(!cfg.production && !cfg.session_cookie_secure);
         assert_eq!(cfg.client_ip_header, "x-forwarded-for");
         assert_eq!(cfg.password, PasswordParams::default());
+    }
+
+    #[test]
+    fn mcp_limits_default_and_are_validated() {
+        let cfg = AppConfig::from_lookup(env(&[])).unwrap();
+        assert_eq!(cfg.mcp, McpConfig::default());
+        assert_eq!(
+            (
+                cfg.mcp.request_limit,
+                cfg.mcp.join_limit,
+                cfg.mcp.token_limit,
+                cfg.mcp.chat_limit
+            ),
+            (300, 10, 60, 30)
+        );
+        let cfg = AppConfig::from_lookup(env(&[
+            ("MCP_REQUEST_LIMIT", "5"),
+            ("MCP_JOIN_LIMIT", "6"),
+            ("MCP_LOOKUP_LIMIT", "7"),
+            ("MCP_LOOKUP_GLOBAL_LIMIT", "8"),
+            ("MCP_TOKEN_LIMIT", "9"),
+            ("MCP_CHAT_LIMIT", "10"),
+            ("CHAT_AGENT_MAX_LENGTH", "50"),
+            ("CHAT_AGENT_MIN_INTERVAL_MS", "0"),
+            ("MCP_POLL_INTERVAL_MS", "20"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            cfg.mcp,
+            McpConfig {
+                request_limit: 5,
+                join_limit: 6,
+                lookup_limit: 7,
+                lookup_global_limit: 8,
+                token_limit: 9,
+                chat_limit: 10,
+                chat_max_length: 50,
+                chat_min_interval_ms: 0,
+                poll_interval_ms: 20,
+            }
+        );
+        for (name, value) in [
+            ("MCP_REQUEST_LIMIT", "0"),
+            ("MCP_TOKEN_LIMIT", "-1"),
+            ("CHAT_AGENT_MAX_LENGTH", "1001"),
+            ("CHAT_AGENT_MIN_INTERVAL_MS", "3600001"),
+            ("MCP_POLL_INTERVAL_MS", "9"),
+            ("MCP_POLL_INTERVAL_MS", "60001"),
+        ] {
+            assert!(
+                AppConfig::from_lookup(env(&[(name, value)])).is_err(),
+                "{name}={value}"
+            );
+        }
     }
 
     #[test]
