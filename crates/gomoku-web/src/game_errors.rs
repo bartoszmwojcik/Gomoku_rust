@@ -112,6 +112,11 @@ impl From<GameError> for ApiError {
                 "Przeciwnik nie jest już dostępny, rewanż jest niemożliwy.",
             )
             .with_data(json!({ "reason": "opponent_gone" })),
+            GameError::RematchWithBot => conflict(
+                "REMATCH_UNAVAILABLE",
+                "Z botem nie ma rewanżu. Zagraj ponownie z botem w nowej partii.",
+            )
+            .with_data(json!({ "reason": "bot" })),
             GameError::LobbySeekerTaken => conflict(
                 "LOBBY_SEEKER_TAKEN",
                 "Ten gracz zagrał już z kimś innym. Wybierz kogoś innego z listy.",

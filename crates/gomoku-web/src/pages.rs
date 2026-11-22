@@ -67,6 +67,8 @@ struct HomePage {
     /// The game that holds the player's slot: its id and the text for its phase.
     current: Option<(String, String)>,
     cancelled_notice: bool,
+    /// Whether the bot is switched on (`BOT_ENABLED`): only then the opponent picker is offered.
+    bot_enabled: bool,
 }
 
 #[derive(Template)]
@@ -186,10 +188,11 @@ pub async fn home(
     render(&HomePage {
         ctx: Ctx::new(tr, user, "/")
             .with_banner()
-            .with_bag(&["home.settings."]),
+            .with_bag(&["home.settings.", "home.opponent."]),
         signed_in_as,
         current,
         cancelled_notice,
+        bot_enabled: state.bot.config.enabled,
     })
 }
 

@@ -4,6 +4,7 @@
 //! There is no background worker: every time-based transition (an invitation expiring, a game nobody opened, a loss on
 //! time) is performed lazily by whoever touches the game next, inside the statements below.
 
+mod bot;
 mod chat;
 mod create;
 mod history;
@@ -23,8 +24,9 @@ use sqlx::{PgConnection, Row};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+pub use bot::{BotTurn, BotTurnRead};
 pub use chat::{ChatMessageRow, ChatRead, ChatSent};
-pub use create::{CreateOutcome, CreatedGame, GuestCreateInput};
+pub use create::{BotSeat, CreateOutcome, CreatedGame, GuestCreateInput};
 pub use history::{HistoryEntryRow, HistoryPageRows, ReviewRows};
 pub use invite::{AcceptInput, AcceptOutcome, JoinAs, PreviewState, PreviewView, Viewer};
 pub use lobby::{LobbyRows, SeekerRow, SeekingStatus};
@@ -96,6 +98,8 @@ pub enum GameError {
     RematchExpired,
     #[error("the opponent is gone")]
     RematchUnavailable,
+    #[error("there is no rematch against the bot")]
+    RematchWithBot,
     #[error("the seeker was taken")]
     LobbySeekerTaken,
     #[error("the seeker's status expired")]
@@ -248,10 +252,14 @@ pub struct PlayerRow {
     pub current_name: Option<String>,
     pub seen: bool,
     pub is_active: bool,
+    /// The bot's frozen strength (`None` for people; memory and cap `None` for level 1).
+    pub bot_level: Option<i16>,
+    pub bot_memory_mb: Option<i16>,
+    pub bot_depth_cap: Option<i16>,
 }
 
 pub(crate) const PLAYER_SELECT: &str = "SELECT p.id, p.seat, p.kind, p.user_id, p.guest_token_hash, p.nickname, p.display_name, \
-     u.display_name AS current_name, p.seen_at IS NOT NULL AS seen, p.is_active \
+     u.display_name AS current_name, p.seen_at IS NOT NULL AS seen, p.is_active, p.bot_level, p.bot_memory_mb, p.bot_depth_cap \
      FROM game_players p LEFT JOIN users u ON u.id = p.user_id";
 
 impl PlayerRow {
@@ -268,6 +276,9 @@ impl PlayerRow {
             current_name: row.try_get("current_name")?,
             seen: row.try_get("seen")?,
             is_active: row.try_get("is_active")?,
+            bot_level: row.try_get("bot_level")?,
+            bot_memory_mb: row.try_get("bot_memory_mb")?,
+            bot_depth_cap: row.try_get("bot_depth_cap")?,
         })
     }
 

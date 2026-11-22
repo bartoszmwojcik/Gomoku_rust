@@ -59,6 +59,8 @@
     }
     // The classic game sends no settings at all (old requests stay byte-identical).
     if (body.variant === "classic") { delete body.variant; delete body.timeControlMs; }
+    // Against a person nothing about the bot is sent; a bot game is always private.
+    if (body.opponent !== "bot") { delete body.opponent; delete body.botLevel; } else delete body.isPublic;
     if (submit) submit.disabled = true;
     const slot = form.querySelector("[data-form-error]");
     if (slot) slot.textContent = texts.sending ?? "";

@@ -10,6 +10,18 @@ use gomoku_db::OffsetDateTime;
 use gomoku_db::games::{GameError, GameRow, PaperSnapshot, Snapshot, SpectatorState, to_ms};
 use serde_json::{Value, json};
 
+/// The bot's name and strength for a seat of kind `bot`: `{ name, bot: { level, memoryMb, tableMb } }`.
+pub fn bot_json(player: &gomoku_db::games::PlayerRow) -> Option<Value> {
+    use gomoku_core::bot::choose_move::BotLevel;
+    use gomoku_core::bot::profile::{bot_display_name, bot_table_mb};
+    let level = BotLevel::from_number(i64::from(player.bot_level?))?;
+    let memory = player.bot_memory_mb.map(i64::from);
+    Some(json!({
+        "name": bot_display_name(level, memory),
+        "bot": { "level": level.number(), "memoryMb": memory, "tableMb": bot_table_mb(level, memory) },
+    }))
+}
+
 /// ISO 8601 UTC with milliseconds, like `Date.prototype.toISOString`.
 pub fn iso_ms(at: OffsetDateTime) -> String {
     let at = at.to_offset(time::UtcOffset::UTC);
@@ -169,12 +181,17 @@ pub fn game_view(
         .players
         .iter()
         .map(|p| {
-            json!({
+            let mut player = json!({
                 "seat": p.seat.number(),
                 "kind": p.kind,
                 "displayName": display_name_of(p.is_guest(), p.seat, p.nickname.as_deref(), p.display_name.as_deref(), p.current_name.as_deref()),
                 "seen": p.seen,
-            })
+            });
+            if let Some(bot) = bot_json(p) {
+                player["displayName"] = bot["name"].clone();
+                player["bot"] = bot["bot"].clone();
+            }
+            player
         })
         .collect();
     let me = snapshot.players.iter().find(|p| p.seat == snapshot.me);

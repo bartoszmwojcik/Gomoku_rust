@@ -10,6 +10,8 @@ use uuid::Uuid;
 use super::GameError;
 use super::{ACTIVE_SLOT_INDEX, Scope, close_stale, release_slots, unique_violation};
 use crate::Database;
+use gomoku_core::constants::INITIAL_CLOCK_MS;
+use gomoku_core::types::Seat;
 
 /// A freshly created waiting game and its invitation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +102,112 @@ async fn insert_waiting_game(
     if settings.variant == GameVariant::Paper {
         insert_paper_state(conn, game_id).await?;
     }
+    insert_creator(conn, game_id, creator, now).await?;
+    sqlx::query(
+        "INSERT INTO invitations (game_id, code, created_at, expires_at) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(game_id)
+    .bind(&code)
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut *conn)
+    .await?;
+    Ok(CreatedGame {
+        game_id,
+        code,
+        expires_at,
+    })
+}
+
+/// The guest's one-slot rule, inside the creation transaction (the advisory lock on the token is held): a refusal to
+/// return after the commit (lazy closings are kept), or `None` when the way is free (an own waiting game cancelled).
+async fn guest_slot_refusal(
+    tx: &mut PgConnection,
+    token_hash: &str,
+    cancel_own_waiting_game: bool,
+    now: OffsetDateTime,
+) -> Result<Option<GameError>, GameError> {
+    let slot = sqlx::query(
+        "SELECT p.game_id, g.status, p.seat FROM game_players p JOIN games g ON g.id = p.game_id \
+         WHERE p.guest_token_hash = $1 AND p.is_active",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(slot) = slot else { return Ok(None) };
+    let game_id: Uuid = slot.try_get("game_id")?;
+    let status: String = slot.try_get("status")?;
+    let seat: i16 = slot.try_get("seat")?;
+    let own_waiting = status == "waiting" && seat == 1;
+    Ok(if !own_waiting {
+        Some(GameError::ActiveGameExists {
+            game_id: Some(game_id),
+        })
+    } else if !cancel_own_waiting_game {
+        Some(GameError::OwnWaitingGame {
+            game_id,
+            on_join: false,
+        })
+    } else if !cancel_waiting_game(tx, game_id, now).await? {
+        // Somebody joined between the read and the cancel: the game is theirs now.
+        Some(GameError::ActiveGameExists {
+            game_id: Some(game_id),
+        })
+    } else {
+        release_slots(tx, game_id).await?;
+        None
+    })
+}
+
+/// The bot's seat: always seat 2, with the strength frozen at creation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotSeat {
+    pub level: i16,
+    pub memory_mb: Option<i16>,
+    pub depth_cap: Option<i16>,
+    /// Which seat plays black (drawn by the caller).
+    pub black_seat: Seat,
+}
+
+/// An active, private classic game against the bot: seat 1 is the creator, seat 2 the bot (which counts as having seen
+/// the game, so the clock starts with the human's first read).
+async fn insert_bot_game(
+    conn: &mut PgConnection,
+    creator: Creator<'_>,
+    bot: BotSeat,
+    now: OffsetDateTime,
+) -> Result<Uuid, sqlx::Error> {
+    let game_id: Uuid = sqlx::query(
+        "INSERT INTO games (origin, status, created_at, started_at, black_seat, is_public, variant, time_control_ms, clock_ms_1, clock_ms_2) \
+         VALUES ('bot', 'active', $1, $1, $2, false, 'classic', $3, $3, $3) RETURNING id",
+    )
+    .bind(now)
+    .bind(i16::from(bot.black_seat.number()))
+    .bind(INITIAL_CLOCK_MS as i32)
+    .fetch_one(&mut *conn)
+    .await?
+    .try_get("id")?;
+    insert_creator(conn, game_id, creator, now).await?;
+    sqlx::query(
+        "INSERT INTO game_players (game_id, seat, kind, is_active, joined_at, seen_at, bot_level, bot_memory_mb, bot_depth_cap) \
+         VALUES ($1, 2, 'bot', true, $2, $2, $3, $4, $5)",
+    )
+    .bind(game_id)
+    .bind(now)
+    .bind(bot.level)
+    .bind(bot.memory_mb)
+    .bind(bot.depth_cap)
+    .execute(&mut *conn)
+    .await?;
+    Ok(game_id)
+}
+
+async fn insert_creator(
+    conn: &mut PgConnection,
+    game_id: Uuid,
+    creator: Creator<'_>,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
     match creator {
         Creator::Account(user_id, display_name) => {
             sqlx::query(
@@ -129,20 +237,7 @@ async fn insert_waiting_game(
             .await?;
         }
     }
-    sqlx::query(
-        "INSERT INTO invitations (game_id, code, created_at, expires_at) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(game_id)
-    .bind(&code)
-    .bind(now)
-    .bind(expires_at)
-    .execute(&mut *conn)
-    .await?;
-    Ok(CreatedGame {
-        game_id,
-        code,
-        expires_at,
-    })
+    Ok(())
 }
 
 impl Database {
@@ -212,40 +307,16 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         close_stale(&mut tx, now, Scope::Guest(input.token_hash)).await?;
-        let slot = sqlx::query(
-            "SELECT p.game_id, g.status, p.seat FROM game_players p JOIN games g ON g.id = p.game_id \
-             WHERE p.guest_token_hash = $1 AND p.is_active",
+        if let Some(refusal) = guest_slot_refusal(
+            &mut tx,
+            input.token_hash,
+            input.cancel_own_waiting_game,
+            now,
         )
-        .bind(input.token_hash)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some(slot) = slot {
-            let game_id: Uuid = slot.try_get("game_id")?;
-            let status: String = slot.try_get("status")?;
-            let seat: i16 = slot.try_get("seat")?;
-            let own_waiting = status == "waiting" && seat == 1;
-            let refusal = if !own_waiting {
-                Some(GameError::ActiveGameExists {
-                    game_id: Some(game_id),
-                })
-            } else if !input.cancel_own_waiting_game {
-                Some(GameError::OwnWaitingGame {
-                    game_id,
-                    on_join: false,
-                })
-            } else if !cancel_waiting_game(&mut tx, game_id, now).await? {
-                // Somebody joined between the read and the cancel: the game is theirs now.
-                Some(GameError::ActiveGameExists {
-                    game_id: Some(game_id),
-                })
-            } else {
-                release_slots(&mut tx, game_id).await?;
-                None
-            };
-            if let Some(refusal) = refusal {
-                tx.commit().await?;
-                return Err(refusal);
-            }
+        .await?
+        {
+            tx.commit().await?;
+            return Err(refusal);
         }
         // The token moves to the new game: older rows must not keep it (it is unique).
         sqlx::query("UPDATE game_players SET guest_token_hash = NULL WHERE guest_token_hash = $1")
@@ -294,5 +365,77 @@ impl Database {
         release_slots(&mut tx, game_id).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Creates an active game of an account against the bot (the caller counted the attempt and admitted the bot).
+    pub async fn create_bot_game_account(
+        &self,
+        user_id: Uuid,
+        bot: BotSeat,
+        now: OffsetDateTime,
+    ) -> Result<Uuid, GameError> {
+        self.settle_for(user_id, now).await?;
+        let mut tx = self.pool().begin().await?;
+        let user = sqlx::query("SELECT display_name FROM users WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(GameError::UserGone)?;
+        let display_name: String = user.try_get("display_name")?;
+        sqlx::query("DELETE FROM lobby_seekers WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        close_stale(&mut tx, now, Scope::User(user_id)).await?;
+        match insert_bot_game(&mut tx, Creator::Account(user_id, &display_name), bot, now).await {
+            Ok(game_id) => {
+                tx.commit().await?;
+                Ok(game_id)
+            }
+            Err(error) if unique_violation(&error).as_deref() == Some(ACTIVE_SLOT_INDEX) => {
+                Err(GameError::ActiveGameExists { game_id: None })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The same for a guest, under the same advisory lock and one-slot rule as an invitation.
+    pub async fn create_bot_game_guest(
+        &self,
+        token_hash: &str,
+        nickname: Option<&str>,
+        cancel_own_waiting_game: bool,
+        bot: BotSeat,
+        now: OffsetDateTime,
+    ) -> Result<Uuid, GameError> {
+        self.settle_for_guest(token_hash, now).await?;
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(token_hash)
+            .execute(&mut *tx)
+            .await?;
+        close_stale(&mut tx, now, Scope::Guest(token_hash)).await?;
+        if let Some(refusal) =
+            guest_slot_refusal(&mut tx, token_hash, cancel_own_waiting_game, now).await?
+        {
+            tx.commit().await?;
+            return Err(refusal);
+        }
+        sqlx::query("UPDATE game_players SET guest_token_hash = NULL WHERE guest_token_hash = $1")
+            .bind(token_hash)
+            .execute(&mut *tx)
+            .await?;
+        let game_id = insert_bot_game(
+            &mut tx,
+            Creator::Guest {
+                token_hash,
+                nickname,
+            },
+            bot,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(game_id)
     }
 }

@@ -163,9 +163,20 @@
     };
   };
 
+  /** "Bot · poziom 2 · 16 MB" built in the viewer's language from the strength the server sends. */
+  const botLabel = (player) => {
+    const bot = player.bot;
+    if (!bot) return player.displayName ?? gt("common.bot.plain");
+    if (bot.level === 2 && bot.tableMb !== null && bot.tableMb !== undefined) {
+      return gt("common.bot.nameWithTable", { level: bot.level, table: gt("common.bot.megabytes", { mb: bot.tableMb }) });
+    }
+    return gt("common.bot.name", { level: bot.level });
+  };
+
   const playerLabelOf = (player) => playerLabel(player, null);
   const playerLabel = (player, mySeat) => {
     const mine = player.seat === mySeat;
+    if (player.kind === "bot") return botLabel(player);
     if (player.kind === "account") {
       if (player.displayName === null) return gt("common.player.deleted");
       return mine ? gt("common.player.youAccount", { name: player.displayName }) : player.displayName;

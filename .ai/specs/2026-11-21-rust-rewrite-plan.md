@@ -255,3 +255,22 @@ F0: instalacja toolchaina, szkielet workspace, `AGENTS.md`, CI i `/api/health`, 
 - Weryfikacja: 13 testów HTTP/DB (reguły, punkty, koniec na punkty, automat, poddanie, rewanż, lobby, historia, widz, sprzątanie), ręcznie w przeglądarce
   (partia 1 min i 5 min: kamienie, punkty 1:1, poddanie, historia, przegląd). Pokrycie: core 100%, db 96%, web 96%.
 - Środowisko: testy zostawiały kontenery PostgreSQL — `scripts/coverage.sh` sprząta teraz te, które sam utworzył.
+
+### F6 — Bot (zrobione, jeden PR)
+
+- Kontrakt: `.ai/docs/2026-11-22-f6-contract.md`. Rdzeń: `gomoku-core::bot` (PRNG mulberry32 + ziarno FNV-1a, Zobrist, plansza wzorców z przyrostowymi
+  wynikami, tablica transpozycji, poziom 1, poziom 2: negamax + alfa-beta + pogłębianie iteracyjne, dyspozytor, profil pamięci, budżet na ruch,
+  walidacja pól `opponent`/`botLevel`, arena R17 + binarka `bot_arena`).
+- **Parytet z Node co do ruchu:** złota partia (seed 1, 86 ruchów) i pełna arena 100 partii dają wyniki identyczne z TS (poziom 2: czarne 50/50, białe
+  47/50, razem 0,97, remisy w partiach 8 i 92, porażki w 18 i 28; te same długości partii). Arena w Ruście: 110 s (release) wobec 225 s w TS.
+- Baza (migracja 0008): `game_players.bot_level/bot_memory_mb/bot_depth_cap`, rodzaj `bot`, pochodzenie `bot` (bez `show` do fazy pokazu), ograniczenia
+  (bot zawsze na miejscu 2, bez konta, parametry tylko dla poziomu 2). Partia z botem jest od razu aktywna i prywatna, bot ma `seen_at` (zegar rusza
+  przy pierwszym odczycie człowieka). Bot gra tą samą ścieżką `play_move` co człowiek; sprzątanie traktuje partie gość–bot jak „tylko goście”.
+- Web: `BOT_*` w konfiguracji; admisja (`503 BOT_UNAVAILABLE` + `Retry-After: 60`, jeden tekst dla każdej przyczyny), bramka obliczeń (jedno wyszukiwanie
+  naraz, FIFO), silnik w osobnym wątku z dużym stosem, licznik awarii (po 3 poziom 1 do końca), usługa tury; planowanie po ruchu człowieka i przy każdym
+  odczycie, gdy na ruchu jest bot (odzyskiwanie leniwe). Brak czatu, rewanżu i flagi publicznej; historia i przegląd nazywają bota siłą.
+- UI: wybór przeciwnika i poziomu (`settings.js`), etykiety przycisków, „Bot myśli…”, odpytywanie co 750 ms, karta „Zagraj ponownie z botem”.
+  Znaleziony przy okazji błąd F5: `last` poza zasięgiem w `game-room.js` psuł ekran po ruchu przeciwnika w partii klasycznej.
+- Odstępstwa: pułap czasu egzekwowany współpracą silnika (co 1024 węzły), bez zabijania wątku; sonda pamięci czyta cgroup v2 i `/proc/meminfo`
+  (mniejsza z wartości); stos wątku wyszukiwania 16 MiB; limity czasu bez zmian (Rust jest szybszy na węzeł, więc głębokość w produkcji będzie większa).
+- Nie zrobione / nie sprawdzono: wydajność na docelowym hoście i sonda pamięci w kontenerze produkcyjnym, tryb pokazu (F8), dotyk/mobile.

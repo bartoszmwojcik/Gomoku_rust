@@ -142,6 +142,15 @@ pub fn history_entry_json(entry: &HistoryEntryRow) -> Value {
         ),
         _ => entry.opponent_name.clone(),
     };
+    let bot = entry.opponent_bot_level.and_then(|level| {
+        use gomoku_core::bot::{choose_move::BotLevel, profile::{bot_display_name, bot_table_mb}};
+        let level = BotLevel::from_number(i64::from(level))?;
+        let memory = entry.opponent_bot_memory_mb.map(i64::from);
+        Some((bot_display_name(level, memory), json!({ "level": level.number(), "memoryMb": memory, "tableMb": bot_table_mb(level, memory) })))
+    });
+    let name = bot
+        .as_ref()
+        .map_or(name, |(bot_name, _)| Some(bot_name.clone()));
     let mut entry_json = json!({
         "gameId": entry.game_id,
         "variant": entry.variant.as_str(),
@@ -154,6 +163,9 @@ pub fn history_entry_json(entry: &HistoryEntryRow) -> Value {
         "reason": entry.reason.as_str(),
         "opponent": { "kind": entry.opponent_kind, "name": name },
     });
+    if let Some((_, bot)) = bot {
+        entry_json["opponent"]["bot"] = bot;
+    }
     if let (Some(scores), Some(object)) = (entry.scores, entry_json.as_object_mut()) {
         object.insert("scores".into(), json!(scores));
     }

@@ -225,8 +225,12 @@ async fn resending_needs_a_session_an_unconfirmed_address_and_respects_the_limit
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
 
     let mut player = sign_up(&app, "ala@example.com", "Ala").await;
+    // The registration mail goes out in the background: it must be in the box before the resends overtake it.
+    app.settle().await;
     let first = token_in(&app, VERIFY_SUBJECT);
     for _ in 0..3 {
+        // The clock is frozen in tests: without a step every link has the same age and the newest is decided by a random id.
+        app.advance_seconds(1);
         let reply = player
             .post("/api/auth/email-verification/resend", Value::Null)
             .await;

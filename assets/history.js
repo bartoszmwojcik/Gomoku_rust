@@ -11,6 +11,7 @@
   let added = 0;
 
   const label = (opponent) => {
+    if (opponent.kind === "bot") return window.Gomoku.playerLabel({ kind: "bot", seat: 0, displayName: opponent.name, bot: opponent.bot }, null);
     if (opponent.kind === "account") return opponent.name ?? gt("common.player.deleted");
     const match = /^Gracz ([12])$/.exec(opponent.name ?? "");
     const name = match ? gt("common.player.guestDefault", { seat: match[1] }) : opponent.name;

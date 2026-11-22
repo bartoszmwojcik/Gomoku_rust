@@ -19,13 +19,14 @@
 {% when None %}
 {% match ctx.user %}
 {% when Some with (_user) %}
-<form data-api="/api/games" data-redirect-game data-testid="create-form" data-reveal-RATE_LIMITED="#create-limit" novalidate>
+<form data-api="/api/games" data-redirect-game data-reveal-BOT_UNAVAILABLE="#bot-unavailable" data-testid="create-form" data-reveal-RATE_LIMITED="#create-limit" novalidate>
   <p data-form-error role="alert" data-testid="form-error"></p>
-  <div data-settings data-testid="game-settings"></div>
+  <div data-settings{% if bot_enabled %} data-bot{% endif %} data-testid="game-settings"></div>
   <p data-testid="home-rules" data-rules aria-live="polite"></p>
-  <p><label><input type="checkbox" name="isPublic" data-testid="create-game-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
-  <button type="submit" data-testid="create-game">{{ ctx.tr.t("home.create.createInvitation") }}</button>
+  <p data-hide-for-bot><label><input type="checkbox" name="isPublic" data-testid="create-game-public"> {{ ctx.tr.t("home.shared.publicGame.label") }}</label><br><small>{{ ctx.tr.t("home.shared.publicGame.hint") }}</small></p>
+  <button type="submit" data-testid="create-game" data-label-bot="{{ ctx.tr.t("home.create.playBot") }}">{{ ctx.tr.t("home.create.createInvitation") }}</button>
 </form>
+<p id="bot-unavailable" role="alert" hidden data-testid="bot-unavailable">{{ ctx.tr.t("home.shared.botUnavailable") }}</p>
 <p id="create-limit" role="alert" hidden>{{ ctx.tr.t("home.shared.tooManyInvitations") }}</p>
 {% when None %}
 <p><a class="button" href="/play" data-testid="play-without-account">{{ ctx.tr.t("home.page.playWithoutAccount") }}</a></p>

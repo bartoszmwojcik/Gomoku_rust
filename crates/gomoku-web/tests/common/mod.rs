@@ -114,6 +114,7 @@ fn state_for(
     let state = AppState {
         email: mail.clone(),
         tasks: tokio_util::task::TaskTracker::new(),
+        bot: gomoku_web::bot::BotRuntime::new(&config.bot),
         hasher: PasswordHasher::new(config.password).unwrap(),
         health: Arc::new(FakeProbe(probe)),
         db,
@@ -234,6 +235,17 @@ impl TestApp {
 
     /// A second router over the same database and mailbox with other settings (e.g. an administrator).
     pub fn router_with(&self, overrides: &[(&str, &str)]) -> Router {
+        self.router_with_bot(overrides, |config| {
+            gomoku_web::bot::BotRuntime::new(&config.bot)
+        })
+    }
+
+    /// The same with a hand-made bot runtime (a scripted engine, a fixed probe).
+    pub fn router_with_bot(
+        &self,
+        overrides: &[(&str, &str)],
+        bot: impl FnOnce(&AppConfig) -> Arc<gomoku_web::bot::BotRuntime>,
+    ) -> Router {
         let config = fast_config(overrides);
         let clock = Arc::clone(&self.clock);
         let state = AppState {
@@ -244,6 +256,7 @@ impl TestApp {
             catalogs: Catalogs::embedded().unwrap(),
             email: self.mail.clone(),
             tasks: self.tasks.clone(),
+            bot: bot(&config),
             config: Arc::new(config.clone()),
         };
         build_router(state, &config.assets_dir)

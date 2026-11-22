@@ -194,7 +194,7 @@ pub const RULES: [Rule; 15] = [
         table: "games",
         primary_key: "id",
         condition: concat!(
-            "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
+            "status = 'active' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'bot')) \
                     AND ",
             game_deadline_sql!("games"),
             " < $1"
@@ -209,7 +209,7 @@ pub const RULES: [Rule; 15] = [
         key: "guestOnlyFinishedGames",
         table: "games",
         primary_key: "id",
-        condition: "status = 'finished' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind <> 'guest') \
+        condition: "status = 'finished' AND NOT EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = games.id AND p.kind NOT IN ('guest', 'bot')) \
                     AND finished_at < $1",
         grace_ms: HOUR_MS,
         protects_email: false,
